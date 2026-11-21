@@ -1,0 +1,1 @@
+import{w as e}from"./os-Et0zSH6z.js";import{t}from"./WebGame-DxRkwu2P.js";var n=e();function r({win:e}){return(0,n.jsx)(t,{game:`facecraft`,win:e})}export{r as default};

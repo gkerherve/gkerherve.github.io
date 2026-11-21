@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- phones: fill the screen, never let a pinch or double-tap zoom the page,
+       and keep the HUD clear of the notch -->
+  <meta name="viewport" content="width=device-width, initial-scale=1,
+        maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>PlanetCraft</title>
+  <!-- the app: installable on Android and desktop, fullscreen, its own icon.
+       The service worker below is what makes it work offline; the manifest
+       is what puts it on a home screen. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0d0f18">
+  <link rel="icon" href="icons/favicon-64.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #05070f; }
+    canvas { display: block; }
+    /* hide the pointer while walking: with pointer lock the browser hides it
+       anyway, and without it a visible cursor is just a distraction */
+    body.playing canvas { cursor: none; }
+    #hud {
+      position: fixed; top: 12px; left: 14px;
+      color: #cfd8ea; font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 13px; line-height: 1.5;
+      text-shadow: 0 1px 3px rgba(0,0,0,.8);
+      pointer-events: none; user-select: none;
+    }
+    #hud b { font-size: 15px; color: #ffffff; letter-spacing: .5px; }
+    #stats { opacity: .7; }
+    #exitBtn {
+      display: none; pointer-events: auto; cursor: pointer;
+      color: #9ec1ff; text-decoration: underline;
+    }
+    #newWorldBtn {
+      pointer-events: auto; cursor: pointer;
+      color: #9ec1ff; text-decoration: underline;
+    }
+    .act {
+      pointer-events: auto; cursor: pointer;
+      color: #9ec1ff; text-decoration: underline;
+    }
+    .links { pointer-events: auto; opacity: .55; font-size: 12px; }
+    .links a { color: #9ec1ff; }
+    /* --- the overview's own menu ---------------------------------------- */
+    /* Down the left, vertically centred, because the thing worth looking at
+       from orbit is in the middle of the screen. The same buttons as the front
+       door, at about two thirds the size: it is the same set of choices, so it
+       should not need reading twice. */
+    #orbitMenu {
+      position: fixed; left: 16px; top: 50%; transform: translateY(-50%);
+      z-index: 6; display: none; flex-direction: column; gap: 8px;
+      width: 196px; max-height: calc(100vh - 32px); overflow-y: auto;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    #orbitMenu.shown { display: flex; }
+    .orbit {
+      padding: 10px 12px; border-radius: 10px; cursor: pointer;
+      background: rgba(19,27,46,.86); color: #fff; text-align: left;
+      font: 600 13px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15);
+      backdrop-filter: blur(3px);
+    }
+    .orbit:hover { border-color: #7fb3ff; background: rgba(24,35,60,.94); }
+    .orbit.on { border-color: #7fb3ff; background: rgba(24,35,60,.94); }
+    .orbit small {
+      display: block; margin-top: 3px; font-weight: 400;
+      font-size: 10px; opacity: .6; color: #cfd8ea;
+    }
+    /* The styles, all of them at once, in a column beside the menu. A dozen
+       names in a list beats stepping through a dozen worlds to find the one
+       you wanted, and it stays out of the middle so the planet underneath is
+       what you are judging them on. */
+    #stylePicker {
+      position: fixed; left: 224px; top: 50%; transform: translateY(-50%);
+      z-index: 6; display: none; flex-direction: column; gap: 3px;
+      width: 178px; max-height: calc(100vh - 32px); overflow-y: auto;
+      padding: 9px; box-sizing: border-box; border-radius: 10px;
+      background: rgba(13,19,34,.88); border: 1px solid rgba(255,255,255,.15);
+      backdrop-filter: blur(3px);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    #stylePicker.shown { display: flex; }
+    #stylePicker .head {
+      color: #fff; font: 600 12px "Segoe UI", sans-serif;
+      padding: 1px 6px 6px;
+    }
+    #stylePicker .head small {
+      display: block; margin-top: 2px; font-weight: 400; font-size: 10px;
+      opacity: .55; color: #cfd8ea;
+    }
+    .stylePick {
+      padding: 6px 9px; border-radius: 7px; cursor: pointer; text-align: left;
+      background: transparent; color: #cfd8ea;
+      border: 1px solid transparent; font: 500 12px "Segoe UI", sans-serif;
+    }
+    .stylePick:hover { background: rgba(255,255,255,.08); color: #fff; }
+    /* the one you are looking at */
+    .stylePick.sel {
+      border-color: #7fb3ff; color: #fff; background: rgba(127,179,255,.14);
+    }
+    #stylePicker .close {
+      margin-top: 6px; padding: 5px 9px; border-radius: 7px; cursor: pointer;
+      background: transparent; color: #9ec1ff; text-align: left;
+      border: 1px solid rgba(255,255,255,.15);
+      font: 500 11px "Segoe UI", sans-serif;
+    }
+    #stylePicker .close:hover { border-color: #7fb3ff; }
+    /* The same actions are one line of underlined words in the HUD, and two
+       doors onto the same thing a thumb apart reads as two different things.
+       !important because main.js shows and hides "new world" with an inline
+       style as you enter and leave play, and an inline style outranks any
+       selector that does not say this. */
+    #hud.quiet #newWorldBtn, #hud.quiet .act { display: none !important; }
+    #menu {
+      position: fixed; inset: 0; display: flex;
+      align-items: center; justify-content: center;
+      background: rgba(3,5,12,.72); z-index: 10;
+      /* the body never scrolls, so the menu itself must cope with a short
+         window rather than spilling off the bottom where it is unreachable */
+      overflow: auto; padding: 20px; box-sizing: border-box;
+    }
+    #menuCard {
+      background: #0d1322; border: 1px solid rgba(255,255,255,.14);
+      border-radius: 12px; padding: 28px 34px; text-align: center;
+      color: #cfd8ea; font-family: "Segoe UI", system-ui, sans-serif;
+      box-shadow: 0 12px 40px rgba(0,0,0,.6);
+      max-height: 100%; overflow-y: auto; box-sizing: border-box;
+      /* one width for every screen, so the card does not jump about as you
+         move between them */
+      width: min(720px, 100%);
+    }
+    /* --- the key list ------------------------------------------------- */
+    #keysCard, #primerCard {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      z-index: 11; width: min(560px, calc(100vw - 32px));
+      max-height: min(74vh, 640px); overflow-y: auto;
+      background: #0d1322; border: 1px solid rgba(255,255,255,.16);
+      border-radius: 12px; padding: 14px 18px 16px;
+      color: #cfd8ea; font: 13px "Segoe UI", system-ui, sans-serif;
+      box-shadow: 0 12px 40px rgba(0,0,0,.6);
+    }
+    #keysCard[hidden], #primerCard[hidden] { display: none; }
+    /* Above the hearts (bottom 78, ~44 tall), centred on the same axis, and
+       it must never eat a click meant for the world — only the pill itself
+       takes the pointer. */
+    #nearBtn {
+      position: fixed; left: 50%; bottom: 126px; transform: translateX(-50%);
+      z-index: 23; display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px 6px 13px; border-radius: 999px; cursor: pointer;
+      background: rgba(13,19,34,.88); border: 1px solid rgba(255,255,255,.22);
+      color: #eef4ff; font: 13px "Segoe UI", system-ui, sans-serif;
+      box-shadow: 0 6px 20px rgba(0,0,0,.45); white-space: nowrap;
+      user-select: none;
+    }
+    #nearBtn[hidden] { display: none; }
+    #nearBtn:hover { border-color: #ffd479; color: #fff; }
+    #nearBtn i {
+      font-style: normal; font-size: 11px; font-weight: 700; color: #1a1408;
+      background: #ffd479; border-radius: 5px; padding: 2px 7px; line-height: 1;
+    }
+    #primerCard h4 { margin: 12px 0 4px; color: #ffd479; font-size: 12px;
+      text-transform: uppercase; letter-spacing: .08em; }
+    #primerCard p { margin: 4px 0; line-height: 1.45; }
+    #primerCard ol { margin: 4px 0 4px 18px; padding: 0; line-height: 1.5; }
+    #primerCard b { color: #fff; }
+    #primerGo {
+      margin-top: 12px; padding: 7px 18px; cursor: pointer;
+      background: #ffd479; color: #1a1408; border: 0; border-radius: 7px;
+      font: 600 13px "Segoe UI", system-ui, sans-serif;
+    }
+    .keysHead { display: flex; align-items: center; margin-bottom: 8px; }
+    .keysHead b { flex: 1; color: #fff; font-size: 15px;
+      text-transform: uppercase; letter-spacing: .05em; }
+    #keysClose {
+      background: transparent; color: #9fb4d8; cursor: pointer;
+      border: 1px solid rgba(255,255,255,.18); border-radius: 8px;
+      padding: 3px 8px; font: 12px "Segoe UI", sans-serif; line-height: 1;
+    }
+    #keysClose:hover { color: #fff; border-color: rgba(255,255,255,.4); }
+    #keysBody h4 {
+      margin: 12px 0 4px; font-size: 11px; font-weight: 600; color: #8f959f;
+      text-transform: uppercase; letter-spacing: .06em;
+    }
+    #keysBody h4:first-child { margin-top: 0; }
+    #keysBody div {
+      display: flex; gap: 10px; padding: 3px 0;
+      border-bottom: 1px solid #1b1f26;
+    }
+    #keysBody kbd {
+      flex: none; min-width: 74px; color: #e8c05a;
+      font: 600 12px "Segoe UI", system-ui, sans-serif;
+    }
+    #keysBody span { color: #cfcabc; flex: 1; }
+    .keyGo {
+      flex: none; background: #1b2540; color: #cfd8ea; cursor: pointer;
+      border: 1px solid rgba(255,255,255,.2); border-radius: 6px;
+      padding: 2px 9px; font: 11px "Segoe UI", sans-serif;
+    }
+    .keyGo:hover:not(:disabled) { border-color: #7fb3ff; color: #fff; }
+    .keyGo:disabled { opacity: .35; cursor: default; }
+    /* A DIAL, not a door: these rows change a setting where they stand and
+       leave the card open, so the lit button is where you are and one click
+       takes you anywhere on the row. */
+    .keyDial { flex: none; display: flex; gap: 3px; flex-wrap: wrap;
+      justify-content: flex-end; }
+    .keyOpt {
+      background: #141a28; color: #9fb4d8; cursor: pointer;
+      border: 1px solid rgba(255,255,255,.16); border-radius: 5px;
+      padding: 2px 8px; font: 11px "Segoe UI", sans-serif; line-height: 1.4;
+      font-variant-numeric: tabular-nums;
+    }
+    .keyOpt:hover { border-color: #7fb3ff; color: #fff; }
+    .keyOpt.on { background: #ffd479; color: #1a1408; border-color: #ffd479;
+      font-weight: 700; }
+    .screen[hidden] { display: none; }
+    /* the card's chrome: back left, close right, both on the same line and
+       both out of the way of the title between them */
+    /* Negative margins on purpose: the card is padded 28px/34px to hold its
+       content in, and a bar laid inside that padding sits marooned in the
+       middle of the corner rather than in it. These pull the two buttons back
+       out to within a few pixels of the card's own edge, which is where the
+       hand goes looking for them. */
+    #menuBar {
+      display: flex; align-items: center; gap: 8px;
+      margin: -21px -27px 6px; min-height: 26px;
+    }
+    #menuBar .grow { flex: 1; }
+    #menuBar button {
+      background: transparent; color: #9fb4d8; cursor: pointer;
+      border: 1px solid rgba(255,255,255,.18); border-radius: 8px;
+      font: 13px "Segoe UI", sans-serif; padding: 4px 11px;
+    }
+    #menuBar button:hover { color: #fff; border-color: rgba(255,255,255,.4); }
+    #menuBar button[hidden] { display: none; }
+    #menuClose { padding: 4px 9px; font-size: 12px; line-height: 1; }
+    /* --- the front door ---------------------------------------------- */
+    #homeGrid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+    }
+    .home {
+      padding: 18px 16px; border-radius: 10px; cursor: pointer;
+      background: #131b2e; color: #fff; text-align: left;
+      font: 600 15px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15);
+    }
+    .home:hover { border-color: #7fb3ff; background: #18233c; }
+    .home small {
+      display: block; margin-top: 4px; font-weight: 400;
+      font-size: 11px; opacity: .6; color: #cfd8ea;
+    }
+    button.home.tool { display: block; width: 100%; margin-bottom: 14px; }
+    /* --- the block maker, in the window rather than out of it -------------
+       It is its own page, and it used to open as one: a second browser window
+       with an address bar, over the top of a game that had gone quiet behind
+       it. In a frame it is part of the app instead, and the world is still
+       there when you close it. */
+    #blockMaker, #skinMaker, #creatureBook {
+      position: fixed; inset: 0; z-index: 40; display: flex;
+      flex-direction: column; background: #0b1020;
+    }
+    #blockMaker[hidden], #skinMaker[hidden], #creatureBook[hidden] { display: none; }
+    #blockMaker .bar, #skinMaker .bar, #creatureBook .bar {
+      display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+      background: #0d1322; border-bottom: 1px solid rgba(255,255,255,.14);
+      color: #cfd8ea; font: 13px "Segoe UI", system-ui, sans-serif;
+    }
+    #blockMaker .bar b, #skinMaker .bar b, #creatureBook .bar b { color: #fff; }
+    #blockMaker .bar .grow, #skinMaker .bar .grow, #creatureBook .bar .grow { flex: 1; }
+    #blockMaker .bar button, #skinMaker .bar button, #creatureBook .bar button {
+      background: #1b2540; color: #cfd8ea; border: 1px solid rgba(255,255,255,.2);
+      border-radius: 6px; padding: 5px 11px; cursor: pointer;
+      font: 12px "Segoe UI", sans-serif;
+    }
+    #blockMaker .bar button:hover, #skinMaker .bar button:hover,
+    #creatureBook .bar button:hover {
+      border-color: #7fb3ff; color: #fff;
+    }
+    #blockMaker iframe, #skinMaker iframe, #creatureBook iframe {
+      flex: 1; width: 100%; border: 0; display: block;
+    }
+    .back {
+      margin-top: 16px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+      background: transparent; color: #9fb4d8;
+      font: 13px "Segoe UI", sans-serif;
+      border: 1px solid rgba(255,255,255,.18);
+    }
+    .back:hover { color: #fff; border-color: rgba(255,255,255,.4); }
+    .field {
+      width: 100%; padding: 9px 10px; margin-bottom: 16px; box-sizing: border-box;
+      border-radius: 8px; background: #0b1120; color: #e6edf8;
+      border: 1px solid rgba(255,255,255,.18);
+      font: 13px "Segoe UI", sans-serif;
+    }
+    /* --- saved worlds -------------------------------------------------- */
+    #saveGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .save {
+      position: relative; padding: 0; overflow: hidden; cursor: pointer;
+      text-align: left; border-radius: 10px; background: #131b2e;
+      border: 2px solid rgba(255,255,255,.15); color: #cfd8ea;
+    }
+    .save:hover { border-color: #7fb3ff; }
+    /* the moment it was last saved — 16:9 so a wide window and a tall one
+       show the same crop */
+    .save .shot {
+      display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+      background: #080d18;
+    }
+    .save .shot.none {
+      display: flex; align-items: center; justify-content: center;
+      font: 11px "Segoe UI", sans-serif; opacity: .4;
+    }
+    .save .meta { padding: 8px 10px; }
+    .save b { display: block; color: #fff; font-size: 13px; }
+    .save small { font-size: 11px; opacity: .6; }
+    .save .del, .save .ren {
+      position: absolute; top: 6px; right: 6px; width: 22px; height: 22px;
+      border: 0; border-radius: 6px; cursor: pointer; line-height: 1;
+      background: rgba(6,10,20,.72); color: #ffb4b4; font-size: 13px;
+    }
+    .save .del:hover { background: #7a2230; color: #fff; }
+    /* The pencil sits to the LEFT of the delete, because the destructive one
+       keeps the corner it has always had — a hand that has learnt where ✕ is
+       should not find a rename under it. */
+    .save .ren { right: 32px; color: #cfd8ea; }
+    .save .ren:hover { background: #1b2540; color: #fff; }
+    /* --- naming a world ------------------------------------------------
+       One card, two doors: the HUD's rename button names the world you are
+       standing in, and the pencil on a save card names that one. Both open
+       this, so there is one way to type a world's name and not two. */
+    #nameCard, #renameCard {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      z-index: 40; width: min(360px, calc(100vw - 32px));
+      background: #0d1322; border: 1px solid rgba(255,255,255,.16);
+      border-radius: 12px; padding: 16px 18px;
+      color: #cfd8ea; font: 13px "Segoe UI", system-ui, sans-serif;
+      box-shadow: 0 12px 40px rgba(0,0,0,.6);
+    }
+    #nameCard[hidden], #renameCard[hidden] { display: none; }
+    #nameCard b, #renameCard b { display: block; color: #fff; font-size: 15px;
+      margin-bottom: 4px; }
+    #nameCard p, #renameCard p { margin: 0 0 10px; opacity: .65; font-size: 12px; }
+    /* the name card sits above everything, including the front door */
+    #nameCard { z-index: 60; }
+    #nameField {
+      width: 100%; box-sizing: border-box; margin-bottom: 10px;
+      padding: 8px 10px; border-radius: 8px; background: #111a2c;
+      border: 1px solid rgba(255,255,255,.18); color: #fff;
+      font: 14px "Segoe UI", system-ui, sans-serif;
+    }
+    #nameRow { display: flex; gap: 8px; justify-content: flex-end; }
+    #nameRow button {
+      padding: 7px 16px; cursor: pointer; border: 0; border-radius: 7px;
+      font: 600 13px "Segoe UI", system-ui, sans-serif;
+      background: #ffd479; color: #1a1408;
+    }
+    #nameStatus { margin: 0 0 10px; min-height: 15px; font-size: 12px;
+      color: #ff9c9c; }
+    #renameField {
+      width: 100%; box-sizing: border-box; margin-bottom: 10px;
+      padding: 8px 10px; border-radius: 8px; background: #111a2c;
+      border: 1px solid rgba(255,255,255,.18); color: #fff;
+      font: 14px "Segoe UI", system-ui, sans-serif;
+    }
+    #renameRow { display: flex; gap: 8px; justify-content: flex-end; }
+    #renameRow button {
+      padding: 7px 16px; cursor: pointer; border: 0; border-radius: 7px;
+      font: 600 13px "Segoe UI", system-ui, sans-serif;
+    }
+    #renameGo { background: #ffd479; color: #1a1408; }
+    #renameNo { background: transparent; color: #9fb4d8;
+      border: 1px solid rgba(255,255,255,.18); }
+    #renameStatus { margin: 0 0 10px; min-height: 15px; font-size: 12px;
+      color: #ff9c9c; }
+    #loadStatus { margin-top: 12px; font-size: 12px; opacity: .7; min-height: 16px; }
+    /* --- saved designs -------------------------------------------------
+       The buildings you have saved with the planner, each as a little 3D
+       render. Same card language as the saved worlds above: picture on top,
+       name and size underneath, a delete in the corner. */
+    #designGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .design {
+      position: relative; padding: 0 0 8px; overflow: hidden; cursor: pointer;
+      text-align: center; border-radius: 10px; background: #131b2e;
+      border: 2px solid rgba(255,255,255,.15); color: #cfd8ea;
+      font-family: "Segoe UI", system-ui, sans-serif; user-select: none;
+    }
+    .design:hover { border-color: #7fb3ff; }
+    .design img {
+      display: block; width: 100%; aspect-ratio: 1; background: #0b1120;
+    }
+    .design b { display: block; color: #fff; font-size: 12px; margin-top: 6px; }
+    .design small { font-size: 11px; opacity: .6; }
+    .design .del {
+      position: absolute; top: 6px; right: 6px; width: 22px; height: 22px;
+      border: 0; border-radius: 6px; cursor: pointer; line-height: 1;
+      background: rgba(6,10,20,.72); color: #ffb4b4; font-size: 13px;
+    }
+    .design .del:hover { background: #7a2230; color: #fff; }
+    #designStatus { margin-top: 10px; font-size: 12px; opacity: .7; min-height: 16px; }
+    /* --- settings ------------------------------------------------------ */
+    #video { display: grid; gap: 8px; margin-bottom: 4px; }
+    #chiefCfg { display: grid; gap: 8px; margin-bottom: 4px; }
+    #chiefCfg .crow { display: flex; align-items: center; gap: 6px;
+      flex-wrap: wrap; }
+    #chiefCfg .crow > span:first-child { flex: 0 0 108px; color: #9aa2ad;
+      font-size: 12px; text-align: right; }
+    #chiefCfg input, #chiefCfg select { flex: 1 1 150px; min-width: 0;
+      background: #14161a; color: #e8e4da; border: 1px solid #343840;
+      border-radius: 5px; padding: 5px 7px; font: inherit; font-size: 12px; }
+    #chiefCfg .cnote { color: #8e949e; font-size: 11.5px; line-height: 1.45;
+      padding-left: 114px; }
+    #chiefCfg .cbtn { flex: 0 0 auto; background: #24272e; color: #e8e4da;
+      border: 1px solid #3a3f48; border-radius: 5px; padding: 5px 9px;
+      cursor: pointer; font: inherit; font-size: 12px; }
+    #chiefCfg .cbtn:hover { background: #2e323a; }
+    #chiefCfg .cstat { color: #8e949e; font-size: 11.5px; }
+    #chiefCfg .cstat.bad { color: #d08a80; }
+    #chiefCfg .cstat.good { color: #8fbf7f; }
+    /* the game's own AI: the engine, the download bar, the shelf of models */
+    #chiefCfg .aibar { flex: 1 1 80px; height: 6px; background: #2a2f37;
+      border-radius: 3px; overflow: hidden; }
+    #chiefCfg .aibar > div { height: 100%; background: #8fbf7f; }
+    #chiefCfg .ailist { display: grid; gap: 6px; margin: 8px 0; }
+    #chiefCfg .aimodel { padding: 6px 8px; border: 1px solid #2f3540;
+      border-radius: 6px; text-align: left; }
+    #chiefCfg .aimodel button { flex: 0 0 auto; width: auto; }
+    #chiefCfg .aimodel.big { opacity: .55; }
+    #chiefCfg .aimodel > div:last-child { display: flex; gap: 4px;
+      flex-wrap: wrap; margin-top: 4px; }
+    .vrow { display: flex; align-items: center; gap: 6px; }
+    .vrow > span {
+      width: 122px; text-align: left; font-size: 12px; opacity: .75;
+      flex: none;
+    }
+    .vopt {
+      flex: 1; padding: 7px 4px; border-radius: 8px; cursor: pointer;
+      background: #131b2e; color: #cfd8ea; font: 12px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15);
+    }
+    .vopt.sel { border-color: #7fb3ff; color: #fff; background: #18233c; }
+    .vnote { font-size: 11px; opacity: .55; text-align: left; margin: 2px 0 8px; }
+    #menuCard h1 { margin: 0 0 4px; font-size: 22px; color: #fff; letter-spacing: .5px; }
+    #menuCard p { margin: 0 0 16px; font-size: 13px; opacity: .75; }
+    /* seven sizes no longer fit on one row on a laptop */
+    #sizes {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 8px; margin-bottom: 18px;
+    }
+    .size {
+      flex: 1; padding: 12px 10px; border-radius: 8px; cursor: pointer;
+      background: #131b2e; color: #cfd8ea; font: 13px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15); white-space: nowrap;
+    }
+    .size small { opacity: .6; font-size: 11px; }
+    .size.sel { border-color: #7fb3ff; color: #fff; background: #18233c; }
+    #presets, #styles {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 6px; margin-bottom: 16px;
+    }
+    #styles { grid-template-columns: repeat(4, 1fr); }
+    .style {
+      padding: 8px 6px; border-radius: 8px; cursor: pointer;
+      background: #131b2e; color: #cfd8ea; font: 12px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15);
+    }
+    .style.sel { border-color: #7fb3ff; color: #fff; background: #18233c; }
+    #styleBlurb { font-size: 11px; opacity: .6; margin: -10px 0 14px; min-height: 28px; }
+    .preset {
+      padding: 8px 6px; border-radius: 8px; cursor: pointer;
+      background: #131b2e; color: #cfd8ea; font: 12px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15);
+    }
+    .preset.sel { border-color: #7fb3ff; color: #fff; background: #18233c; }
+    #modes { display: flex; gap: 8px; margin-bottom: 16px; }
+    .mode {
+      flex: 1; padding: 10px; border-radius: 8px; cursor: pointer;
+      background: #131b2e; color: #cfd8ea; font: 13px "Segoe UI", sans-serif;
+      border: 2px solid rgba(255,255,255,.15);
+    }
+    .mode small { opacity: .6; font-size: 10px; }
+    .mode.sel { border-color: #7fb3ff; color: #fff; background: #18233c; }
+    #createBtn {
+      width: 100%; padding: 11px; border: 0; border-radius: 8px; cursor: pointer;
+      background: #3d78d8; color: #fff; font: 600 15px "Segoe UI", sans-serif;
+    }
+    #createBtn:hover { background: #4d88e8; }
+    #menuStatus { margin-top: 10px; font-size: 12px; min-height: 16px; opacity: .8; }
+    #chiefSign { margin-top: 12px; font-size: 12px; opacity: .85; }
+    #chiefSign b { font-weight: 600; }
+    #chiefSign .ok { color: #8fbf7f; }
+    #chiefSign .bad { color: #d08a80; }
+    #chiefSign .idle { color: #9aa2ad; }
+    #crosshair {
+      position: fixed; left: 50%; top: 50%; width: 4px; height: 4px;
+      margin: -2px 0 0 -2px; border-radius: 50%;
+      background: rgba(255,255,255,.85); box-shadow: 0 0 3px rgba(0,0,0,.9);
+      display: none; pointer-events: none;
+    }
+    #minimap {
+      position: fixed; top: 16px; right: 16px; width: 150px; height: 150px;
+      border-radius: 50%; display: none; pointer-events: none;
+      border: 2px solid rgba(255,255,255,.28);
+      box-shadow: 0 3px 14px rgba(0,0,0,.55);
+      box-sizing: border-box;
+    }
+    /* A PHONE'S SCREEN IS FOR THE WORLD. The globe is lovely and 150px of
+       it in the corner of a 380px-tall display is a quarter of the sky —
+       on middling screens it shrinks, and on properly small ones it goes,
+       along with the readouts that share its corner. The almanac's chart
+       still has the full map for anybody who wants one. */
+    @media (max-width: 900px), (max-height: 620px) {
+      #minimap { width: 92px; height: 92px; top: 10px; right: 10px; }
+    }
+    @media (max-width: 560px), (max-height: 420px) {
+      /* THE MAP MOVES LEFT, into the corner the title and the links used
+         to hold. It is the one readout worth the pixels — you steer by it
+         — and small enough at 84px to leave the sky alone. */
+      #minimap { display: block !important; width: 84px; height: 84px;
+                 top: 10px; left: 10px; right: auto; }
+      /* the title and every link with it: on a phone they are ten taps
+         nobody can hit, and the menu button's fan has replaced the ones
+         that matter (orbit, full, the ? card). #hint keeps its place as
+         the line flash() writes to. */
+      #hud > b, #hud br, #hud .links, #hud .act,
+      #hud #exitBtn, #hud #landBtn, #hud #stats { display: none !important; }
+      /* the join chatter shares the bar's corner; it says its piece over
+         the world instead, well clear of the menu button */
+      #netHud { bottom: auto !important; top: 10px !important;
+                left: 104px !important; font-size: 10px; opacity: .55; }
+      #hud { max-width: 60vw; left: 104px !important; top: 10px !important;
+             font-size: 11px; }
+      /* WHERE YOU ARE STAYS. The tool name is on the hotbar and what you are
+         looking at is under the crosshair, but X/Y/Z is the one readout with
+         no other home — it is how you find your way back to your own village
+         — so hud2 keeps its corner and loses everything except the
+         coordinates. */
+      /* The one free strip on a phone: under the clock (which ends about
+         90px down at its phone scale) and above the use/jump buttons. Every
+         other edge is spoken for — stick bottom-left, buttons bottom-right,
+         hotbar bottom-centre, HUD top-left. */
+      #hud2 { top: 96px !important; bottom: auto !important;
+              right: 10px !important; left: auto !important;
+              font-size: 11px; text-align: right; }
+      #hud2 > div:not(#coords) { display: none !important; }
+      #coords { color: rgba(255,255,255,.85);
+                text-shadow: 0 1px 3px rgba(0,0,0,.95); }
+      /* the clock keeps its job and loses its acreage: with the globe gone
+         it slides into the freed corner at three quarters scale */
+      #clock { top: 10px !important; right: 10px !important;
+               transform: scale(0.78); transform-origin: top right; }
+    }
+    /* --- the world clock -------------------------------------------------
+       Under the minimap, above the coordinates: what time it is WHERE YOU
+       ARE STANDING. The sun turns about a fixed axis, so a clock that read
+       straight off `sunAngle` would say noon to somebody watching the sun
+       set — the hour is the LOCAL solar one, worked out from the angle
+       between the player's own up and the sun. See localHour() in main.js.
+
+       The track under the digits is the whole twenty-four: the gold band is
+       the half of the turn the sun is above the horizon, the dark band the
+       half it is below, and the pip is now. One glance says both what time
+       it is and how much of the daylight is left, which the digits alone
+       never do on a world whose day is ten minutes long. */
+    #clock {
+      position: fixed; top: 176px; right: 16px; width: 150px;
+      display: none; text-align: right; pointer-events: none;
+      color: #e6ecf7; font: 12px "Segoe UI", system-ui, sans-serif;
+      text-shadow: 0 1px 3px rgba(0,0,0,.85);
+    }
+    #clockRow {
+      display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+    }
+    /* The purse. Hidden while it is empty — a nought in gold on a world you
+       have not sold anything on yet is a bit of chrome asking to be noticed
+       for nothing. */
+    #purse {
+      display: none; align-items: center; justify-content: flex-end; gap: 5px;
+      margin-top: 5px; color: #e8c877; font-weight: 600;
+    }
+    #purse.on { display: flex; }
+    #purse i {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 32%, #f4dd9a, #c9a251 62%, #96712c);
+      box-shadow: 0 0 5px rgba(232,200,119,.5);
+    }
+    /* The sun and the moon, as one disc that changes its clothes: warm and
+       glowing while the sun is up, cold and pale once it is down. A colour
+       and a shadow, so it costs no image and no canvas. */
+    #clockOrb {
+      width: 13px; height: 13px; border-radius: 50%; flex: none;
+      background: #ffd479; box-shadow: 0 0 7px rgba(255,196,80,.85);
+      transition: background .4s linear, box-shadow .4s linear;
+    }
+    #clock.night #clockOrb {
+      background: #cfd9ec; box-shadow: 0 0 6px rgba(180,205,255,.5);
+    }
+    #clockTime {
+      font: 600 19px/1 Consolas, "Cascadia Mono", monospace;
+      letter-spacing: .5px; color: #fff;
+    }
+    /* the day count: smaller and dimmer than the time, on the same line and
+       kept there — at the clock's own size it wrapped, and a "day" on one
+       line with its number on the next reads as a typo */
+    #clockRow { white-space: nowrap; }
+    #clockDay {
+      margin-left: 7px; font: 600 12px/1 Consolas, "Cascadia Mono", monospace;
+      letter-spacing: .4px; color: rgba(226,234,247,.65);
+    }
+    #clockPhase {
+      margin-top: 1px; font-size: 10px; letter-spacing: 1.6px;
+      text-transform: uppercase; color: rgba(226,234,247,.8);
+    }
+    /* Gold for the sun-up half rather than sky blue: the track is drawn OVER
+       the sky, and a blue band on a blue sky is an empty bar. */
+    #clockTrack {
+      position: relative; margin-top: 4px; height: 5px; border-radius: 3px;
+      overflow: hidden; background: #0b1017;
+      border: 1px solid rgba(0,0,0,.55);
+      box-shadow: 0 0 0 1px rgba(255,255,255,.12);
+      /* 6:00 to 18:00 is a quarter to three quarters of the way along */
+      background-image: linear-gradient(to right,
+        #0b1017 0 25%, #f0c463 25% 75%, #0b1017 75% 100%);
+    }
+    #clockPip {
+      position: absolute; top: -1px; bottom: -1px; width: 2px;
+      margin-left: -1px; background: #fff; border-radius: 1px;
+      box-shadow: 0 0 3px rgba(0,0,0,.9);
+    }
+    #week { margin-top: 6px; }
+    #weekDays {
+      display: flex; justify-content: flex-end; gap: 2px;
+    }
+    #weekDays i {
+      font-style: normal; font-size: 9px; line-height: 13px; width: 15px;
+      text-align: center; border-radius: 2px; background: rgba(10,16,23,.55);
+      color: rgba(226,234,247,.55); letter-spacing: .5px;
+    }
+    #weekDays i.holy { color: #e8c877; }
+    #weekDays i.on {
+      background: rgba(240,196,99,.9); color: #17130c; font-weight: 700;
+    }
+    #weekNext {
+      margin-top: 3px; font-size: 10px; letter-spacing: .4px;
+      color: rgba(226,234,247,.72);
+    }
+    #weekNext b { color: #f0c463; font-weight: 600; }
+    #weekNext.soon b { color: #ffe9a8; }
+    /* 282, not 236: the clock grew a week under it — seven day chips and the
+       next prayer — and at 236 the prayer line was printed straight through
+       "tool: wooden pickaxe". */
+    #hud2 {
+      position: fixed; top: 282px; right: 16px; width: 150px;
+      display: none; text-align: right; pointer-events: none;
+      color: #cfd8ea; font: 12px "Segoe UI", system-ui, sans-serif;
+      line-height: 1.6; text-shadow: 0 1px 3px rgba(0,0,0,.85);
+    }
+    #hud2 b { color: #fff; }
+    #hud2 .dim { opacity: .65; }
+    #coords { white-space: pre-line; font-family: Consolas, monospace; }
+    #targetInfo {
+      margin-top: 6px; font-size: 11px; line-height: 1.5;
+      border-top: 1px solid rgba(255,255,255,.16); padding-top: 5px;
+    }
+    #targetInfo .blk { color: #fff; font-weight: 600; }
+    /* green = this block's art is painted for the chosen style; amber = it is
+       still falling through to the classic painters */
+    #targetInfo .done { color: #8fe08f; }
+    #targetInfo .todo { color: #e0c06a; }
+    #targetInfo .tiles { opacity: .55; font-family: Consolas, monospace; }
+    #mineBar {
+      position: fixed; left: 50%; top: calc(50% + 16px); width: 44px; height: 5px;
+      margin-left: -22px; border-radius: 3px; overflow: hidden;
+      background: rgba(255,255,255,.22); display: none; pointer-events: none;
+    }
+    #mineFill { height: 100%; width: 0; background: #ffffff; }
+    #hotbar {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      display: none; gap: 6px; padding: 6px;
+      background: rgba(10,14,24,.55); border: 1px solid rgba(255,255,255,.15);
+      border-radius: 8px; user-select: none;
+    }
+    .slot {
+      position: relative; width: 40px; height: 40px; cursor: pointer;
+      border: 2px solid rgba(255,255,255,.25); border-radius: 4px;
+    }
+    .slot canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+    /* the other hand: set apart from the nine, and pushed off the row a
+       little so the eye reads it as a hand rather than as slot zero */
+    .slot.off {
+      margin-right: 10px; border-style: dashed;
+      border-color: rgba(255,255,255,.18);
+    }
+    .slot.off.full { border-style: solid; border-color: rgba(255,255,255,.4); }
+    .slot.off span { opacity: .5; }
+    .slot.sel { border-color: #ffffff; }
+    .slot span {
+      position: absolute; top: 1px; left: 3px; font: 10px sans-serif;
+      color: #fff; text-shadow: 0 1px 2px #000;
+    }
+    /* A worn tool's remaining life. Deliberately the same three pixels of
+       green over black that craftui.js draws on its slots, so one bar means
+       one thing wherever you meet it; main.js only shows it below full. */
+    .slot .dur {
+      position: absolute; left: 3px; right: 3px; bottom: 2px; height: 3px;
+      display: none; border-radius: 2px; overflow: hidden;
+      background: rgba(0,0,0,.6); pointer-events: none;
+    }
+    .slot .dur i { display: block; height: 100%; background: #6ee06e; }
+    /* --- the planner ---------------------------------------------------- */
+    /* Sits above the hotbar and says what the planner is waiting for. The
+       flash line was the wrong place for it: it fades, and "press C again"
+       is true until you do. */
+    #planHint {
+      position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%);
+      display: none; padding: 7px 14px; border-radius: 8px; z-index: 6;
+      background: rgba(10,14,24,.74); border: 1px solid rgba(255,208,60,.55);
+      color: #ffe9a8; font: 13px "Segoe UI", system-ui, sans-serif;
+      text-shadow: 0 1px 3px rgba(0,0,0,.8);
+      pointer-events: none; user-select: none; white-space: nowrap;
+    }
+    #planHint b { color: #fff; }
+    /* --- the road ------------------------------------------------------- */
+    /* Which of the five rings you are on, and the next step — the game's
+       aim as one line you can read at a glance. See js/realm.js. */
+    #road {
+      position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+      display: none; width: max-content; max-width: min(72vw, 560px);
+      padding: 7px 14px 8px; border-radius: 12px; z-index: 5;
+      pointer-events: none; user-select: none; text-align: center;
+      background: rgba(10,14,24,.62); border: 1px solid rgba(232,200,119,.38);
+      color: #e9e4d6; font: 12px/1.45 "Segoe UI", system-ui, sans-serif;
+      text-shadow: 0 1px 3px rgba(0,0,0,.85);
+    }
+    #road.on { display: block; }
+    #road b { color: #ffe9a8; font-size: 14px; font-weight: 600; }
+    #road u { text-decoration: none; margin-left: 10px; color: #fff;
+      background: rgba(255,208,60,.22); border-radius: 999px; padding: 1px 9px;
+      font-weight: 600; font-variant-numeric: tabular-nums; }
+    #road i { display: block; font-style: normal; margin-top: 2px; color: #d7d2c4; }
+    #road em { display: block; font-style: normal; margin-top: 2px; color: #b9c7a4;
+      font-size: 11px; letter-spacing: .02em; }
+    /* ...and the moment a whole world is yours */
+    #crown {
+      position: fixed; left: 50%; top: 24%; transform: translate(-50%, -50%) scale(.96);
+      z-index: 30; text-align: center; pointer-events: none; opacity: 0;
+      transition: opacity .9s ease, transform 1.4s ease;
+      color: #ffe9a8; text-shadow: 0 2px 14px rgba(0,0,0,.9), 0 0 34px rgba(255,200,80,.45);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    #crown.on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    #crown b { display: block; font-size: clamp(30px, 5.4vw, 64px); font-weight: 600; letter-spacing: .04em; }
+    #crown i { display: block; margin-top: 10px; font: 15px "Segoe UI", system-ui, sans-serif;
+      font-style: normal; color: #f4ecd6; max-width: 620px; }
+    #planHint kbd {
+      background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3);
+      border-radius: 4px; padding: 0 5px; font: 12px Consolas, monospace;
+      color: #fff;
+    }
+
+    /* --- the server's corner ---------------------------------------------
+       What the terminal used to say, small, bottom-left: the join URLs,
+       who is on, and the server's last few lines. The window launcher has
+       no terminal any more, so this is where those words live. Hidden in
+       first person — it belongs to the menu and the orbit view. */
+    #serverInfo {
+      position: fixed; left: 10px; right: 10px; bottom: 8px; z-index: 4;
+      max-width: 40ch; display: none;
+      font: 10px/1.55 Consolas, "Cascadia Mono", monospace;
+      color: rgba(214,224,238,.62);
+      text-shadow: 0 1px 2px rgba(0,0,0,.85);
+      pointer-events: none; user-select: none; white-space: pre-wrap;
+    }
+    #serverInfo .dim { color: rgba(214,224,238,.38); }
+    body.playing #serverInfo { display: none !important; }
+    /* The overview's buttons live in this same corner — down the left, and on
+       a short window the column reaches the bottom of the screen — so the
+       server's log printed straight over the top of them and neither could be
+       read. Two rules, not a magic offset: the buttons are the higher layer
+       (z-index above, so their near-opaque backing hides whatever is under
+       them at ANY window size), and while that column is on screen the text
+       steps out from under it entirely. The style list, when it is open, is
+       the second column and moves the text again. Sibling selectors because
+       #orbitMenu and #stylePicker both precede #serverInfo in the body, and
+       js/orbitmenu.js already owns the .shown class on each.
+
+       `right` is set as well as `left` above so that the box can only ever
+       be as wide as the room left beside those columns: pushed to 412px in a
+       600px window it wraps instead of running off the screen edge, where it
+       would be exactly as unreadable as it was underneath the buttons. */
+    #orbitMenu.shown ~ #serverInfo { left: 224px; }
+    #stylePicker.shown ~ #serverInfo { left: 412px; }
+    #planPanel {
+      position: fixed; inset: 0; z-index: 11; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(3,5,12,.62);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    #planPanel .card {
+      background: #0d1322; border: 1px solid rgba(255,255,255,.14);
+      border-radius: 12px; padding: 22px 26px; color: #cfd8ea;
+      box-shadow: 0 12px 40px rgba(0,0,0,.6); text-align: center;
+      width: min(560px, 92vw); max-height: 82vh; overflow-y: auto;
+      box-sizing: border-box;
+    }
+    #planPanel h2 { margin: 0 0 6px; font-size: 17px; color: #fff; }
+    #planPanel p { margin: 0 0 14px; font-size: 12px; opacity: .7; }
+    #planPanel .row { display: flex; gap: 8px; margin-top: 14px; }
+    #planPanel button {
+      flex: 1; padding: 9px; border-radius: 8px; cursor: pointer; border: 0;
+      background: #3d78d8; color: #fff; font: 600 13px "Segoe UI", sans-serif;
+    }
+    #planPanel button:hover { background: #4d88e8; }
+    #planPanel button.ghost {
+      background: #131b2e; color: #cfd8ea; font-weight: 400;
+      border: 1px solid rgba(255,255,255,.18);
+    }
+    #planPanel button.ghost:hover { background: #18233c; color: #fff; }
+    #planPanel .designs {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;
+      margin-top: 4px;
+    }
+    #planPanel .designs button {
+      text-align: left; background: #131b2e; color: #cfd8ea; font-weight: 400;
+      border: 2px solid rgba(255,255,255,.15);
+    }
+    #planPanel .designs button:hover { border-color: #7fb3ff; color: #fff; }
+    #planPanel .designs small { display: block; opacity: .55; font-size: 11px; }
+  </style>
+  <script>
+    // surfaces uncaught errors for debugging (data-err on <html>)
+    addEventListener('error', (e) => {
+      document.documentElement.dataset.err =
+        e.message + ' @ ' + (e.filename || '').split('/').pop() + ':' + e.lineno;
+    });
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+<style>
+#sleepVeil {
+  position: fixed; inset: 0; background: #000; opacity: 0;
+  pointer-events: none; z-index: 60;
+  transition: none;
+}
+/* Under water, and the ONE part of it that is not in the render.
+   The colour and the closing-in fog are drawn in the scene, where a
+   screenshot can catch them; a real blur would mean rendering the world to a
+   texture and sampling it back, which is a second full-screen pass, so the
+   softening is a backdrop filter instead. z-index 1 puts it over the canvas
+   and under every piece of HUD, which must stay sharp. main.js writes the
+   filter and clears it the moment you surface — an idle backdrop-filter still
+   promotes the canvas to a composited layer of its own. */
+#deepVeil {
+  position: fixed; inset: 0; pointer-events: none; z-index: 1;
+}
+</style>
+<style>#chiefSign,#chiefCfg{display:none!important}</style>
+</head>
+<body>
+  <!-- The night, going past. Painted over everything and clickable through,
+       because a bed is not a screen you are in: you lie down, it goes dark,
+       and you are standing there again in the morning. -->
+  <div id="sleepVeil"></div>
+  <!-- the softening while you are under water; see #deepVeil above -->
+  <div id="deepVeil"></div>
+  <div id="hud">
+    <b>PlanetCraft</b><br>
+    <span id="hint">click the planet to walk on it &middot; drag to orbit &middot; scroll to zoom</span>
+    <span id="exitBtn">back to orbit</span>
+    <!-- ...and the other way. Hidden in play, where you are already there;
+         the overview's panel clicks it. See js/orbitmenu.js. -->
+    <span id="landBtn" class="act" hidden>back to your world</span>
+    <!-- ...and the way out of the whole thing. Saves first; see main.js. -->
+    <span id="quitBtn" class="act" hidden>exit</span>
+    <span id="newWorldBtn">new world</span>
+    <span id="saveBtn" class="act">save</span>
+    <!-- The world was named when it was made, often before you had seen a
+         yard of it. This is how it gets the name it earns. -->
+    <span id="renameBtn" class="act">rename</span>
+    <span id="loadBtn" class="act">load</span>
+    <span id="fullBtn" class="act">fullscreen</span>
+    <span id="dressBtn" class="act">skin maker</span>
+    <span id="styleBtn" class="act">style (Y)</span>
+    <!-- Every key the game listens for, in one card. They were spread across
+         a thousand lines of keydown and nothing anywhere listed them, so the
+         only way to find out that J opens the almanac was to be told. -->
+    <span id="keysBtn" class="act">keys (?)</span>
+    <!-- Fast forward: the WORLD hurries, you do not. A village day is twenty
+         real minutes, which is a long time to stand and watch somebody walk
+         home to bed. See setTimeScale in js/main.js. -->
+    <span id="speedBtn" class="act">speed (&times;1)</span><br>
+    <span id="stats">no world yet</span><br>
+    <span class="links">
+      <a href="tests.html" target="_blank">run tests</a>
+    </span>
+  </div>
+  <!-- The overview menu. Each button names the control in the HUD it opens,
+       so there is one implementation of "save world" rather than two that
+       drift apart; js/orbitmenu.js does the wiring and decides when this is
+       on screen. -->
+  <div id="orbitMenu">
+    <!-- The way back IN. From orbit you land by clicking the planet, which is
+         a fine thing to know and a poor thing to have to guess: every other
+         action up here is a button down this side and going back to your own
+         feet was the one that was not. It clicks the HUD's own control, like
+         everything else in this panel. -->
+    <button class="orbit" data-click="landBtn">Back to your world
+      <small>stand on it again, where you left off</small></button>
+    <button class="orbit" data-click="newWorldBtn">Back to menu
+      <small>the front door, and everything behind it</small></button>
+    <button class="orbit" data-click="saveBtn">Save world
+      <small>keep it as it stands</small></button>
+    <button class="orbit" data-click="renameBtn">Rename world
+      <small>call it what it turned out to be</small></button>
+    <button class="orbit" data-click="loadBtn">Load world
+      <small>every world you have made &middot; rename any of them here</small></button>
+    <button class="orbit" data-click="fullBtn">Fullscreen
+      <small>fill the screen &middot; M</small></button>
+    <button class="orbit" data-click="dressBtn">Skin maker
+      <small>who you are &mdash; a Minecraft skin, made here</small></button>
+    <button class="orbit" data-opens="stylePicker">Style
+      <small>every look, side by side &middot; Y</small></button>
+    <button class="orbit" data-click="quitBtn">Exit
+      <small>save, and close the game</small></button>
+  </div>
+  <!-- filled from the style buttons the settings screen already builds, so
+       there is one catalogue of styles and not two; see js/orbitmenu.js -->
+  <div id="stylePicker"></div>
+  <div id="minimap"></div>
+  <div id="clock">
+    <div id="clockRow"><span id="clockOrb"></span><span id="clockTime">12:00</span><span id="clockDay"></span></div>
+    <div id="clockPhase">day</div>
+    <div id="clockTrack"><i id="clockPip" style="left:50%"></i></div>
+    <!-- What is in your purse. It sits under the clock because it is the
+         other number you keep an eye on and never touch: everything in a
+         village shop is priced in these. -->
+    <div id="purse"><i></i><b id="purseN">0</b></div>
+    <!-- THE WEEK. Seven days, today lit, and under it the hour of the next
+         prayer and how long there is to get there. The whole village walks to
+         the church on those hours, so it is a thing you plan around rather
+         than a decoration — which is why it lives on the clock and not in a
+         menu. -->
+    <div id="week">
+      <div id="weekDays"></div>
+      <div id="weekNext"></div>
+    </div>
+  </div>
+  <div id="hud2">
+    <div>tool: <b id="toolLabel">hand</b> <span class="dim">(T)</span></div>
+    <div id="coords" class="dim"></div>
+    <div id="targetInfo"></div>
+  </div>
+  <!-- THE KEYS. Filled in from KEY_HELP in js/main.js so the list lives beside
+       the handlers it describes rather than drifting away from them in a file
+       of its own. Toggled by the HUD button or by pressing ? — see keydown. -->
+  <div id="primerCard" hidden>
+    <div class="keysHead"><b>you are a chief</b></div>
+    <p>The aim is the planet. Grow a settlement, earn gold, grow its people,
+      get on with the neighbours &mdash; every settlement under one chief, and
+      then the other planets.</p>
+    <h4>found a village of your own</h4>
+    <ol>
+      <li>Craft a <b>bell</b> &mdash; three planks over four bronze ingots
+        &mdash; and place it in wild country, well clear of any settlement.
+        The ground around it is yours from that moment, named and on the
+        books.</li>
+      <li><b>Ring the bell with coin in your pocket</b> and a settler answers
+        &mdash; 30 coin each, men and women in turn.</li>
+      <li><b>Build houses and lay beds</b> &mdash; every bed near your bell
+        makes room for one more soul. At night, couples pair and children are
+        born.</li>
+      <li><b>Point at a villager and press Z.</b> The first press takes them
+        on &mdash; a meal out of your pack and 24 coin &mdash; and every press
+        after it is the order card: cut wood, farm, mine, cook, build.
+        A villager who is not yours yet takes no orders, which is why the
+        hiring is on the same key.</li>
+    </ol>
+    <h4>take another village</h4>
+    <p>A village that <b>swears</b> to you keeps its bell, its people and its
+      chief, sends you a share of its takings every dawn, and its people take
+      your orders with <b>Z</b>. There are two roads to that oath:</p>
+    <ol>
+      <li><b>The slow one &mdash; goodwill.</b> Every coin you spend or earn at
+        a village's counter makes it think better of you; so does a gift to
+        its chief, and every wrong undoes it. When it thinks well enough of
+        you, right-click its chief and say <b>&ldquo;Swear to me&rdquo;</b>:
+        for a purse of coin he will &mdash; and it is his own decision, made
+        by the mind that runs the villages.</li>
+      <li><b>The fast one &mdash; the sword.</b> Hold a sword, spear, hammer
+        or bow and right-click one of your hired hands to arm him; Z on an
+        armed hand, then <b>raid</b>. Hold the village's fields with its
+        garrison broken and it <b>yields</b>, a quarter of its purse with
+        it.</li>
+      <li><b>Or empty it:</b> bring its bell down and its people leave; a
+        bell of your own in the empty belfry makes the houses yours.</li>
+      <li>The other chiefs are doing the same to each other. A chief who wins
+        a raid takes the loser's oath, and realms grow &mdash; beat the head
+        of one and everything sworn to it comes with it.</li>
+    </ol>
+    <h4>the planet, and the other planets</h4>
+    <p>The line at the top of the screen says which ring you are on, and
+      <b>J</b> &rarr; <b>the road</b> shows every village and who it answers
+      to. Hold <b>every</b> settlement and the world is yours: its bells
+      ring, and it sends its tribute after you wherever you go. Then press
+      <b>L</b> for the next world &mdash; the hands standing with you at the
+      pad come too, arms and all.</p>
+    <h4>earning coin</h4>
+    <p>Sell goods over any village shop counter, or mine <b>gold</b> (it
+      lives deep in the rock) and strike it at a <b>mint</b> &mdash; nine coin
+      to the bar.</p>
+    <p>Press <b>?</b> any time for the keys. This card is under it too.</p>
+    <button id="primerGo" type="button">got it &mdash; ring the bells</button>
+  </div>
+  <!-- YOUR NAME, asked once and kept. The game used to invent one — "player
+       47" — which is not a name, it is a seat number, and it is what every
+       other player in a co-op world saw over your head. -->
+  <div id="nameCard" hidden>
+    <b>what shall we call you?</b>
+    <p>It goes over your head in a shared world, and on everything you make.</p>
+    <input id="nameField" class="field" maxlength="24" placeholder="your name"
+      autocomplete="off" spellcheck="false">
+    <p id="nameStatus"></p>
+    <div id="nameRow">
+      <button id="nameGo" type="button">that is me</button>
+    </div>
+  </div>
+  <div id="renameCard" hidden>
+    <b>name this world</b>
+    <p>whatever you will recognise it by in a month</p>
+    <input id="renameField" class="field" maxlength="40" placeholder="world name">
+    <p id="renameStatus"></p>
+    <div id="renameRow">
+      <button id="renameNo" type="button">cancel</button>
+      <button id="renameGo" type="button">rename</button>
+    </div>
+  </div>
+  <div id="keysCard" hidden>
+    <div class="keysHead"><b>keys</b>
+      <button id="keysClose" type="button" title="close">&#10005;</button></div>
+    <div id="keysBody"></div>
+  </div>
+  <!-- THE BUTTON OVER THE HEARTS. Z opens the order card and a key you have
+       to be told about is a key nobody presses, so when somebody you can
+       command — or take on — is within arm's reach, the thing you can do
+       about it appears where you are already looking. It clicks straight
+       through to openOrders, so there is one implementation and the key and
+       the button can never mean different things. -->
+  <div id="nearBtn" hidden><b></b><i>Z</i></div>
+  <div id="crosshair"></div>
+  <div id="mineBar"><div id="mineFill"></div></div>
+  <div id="hotbar"></div>
+  <!-- the planner's running commentary: which key it is waiting for, and how
+       big the thing you are marking or placing has got -->
+  <div id="planHint"></div>
+  <div id="road"></div>
+  <div id="crown"></div>
+  <div id="planPanel"></div>
+  <!-- the server terminal's words, relocated: join URLs and the last few
+       log lines, bottom-left, out of the way -->
+  <div id="serverInfo"></div>
+  <div id="menu">
+    <div id="menuCard">
+      <!-- THE CARD'S OWN CHROME. Back at the top left, close at the top
+           right, where a window has kept them for thirty years — the back
+           buttons at the FOOT of each screen are still there and still work,
+           but on a long screen (settings runs past the bottom of the window)
+           the only way out was to scroll to find it. Both are filled in by
+           setScreen: back appears only when there is somewhere to go, and
+           close only when there is a world to close back to. -->
+      <div id="menuBar">
+        <button id="menuBack" type="button" hidden>&larr; back</button>
+        <span class="grow"></span>
+        <button id="menuClose" type="button" title="close" hidden>&#10005;</button>
+      </div>
+      <h1>PlanetCraft</h1>
+
+      <!-- The front door. Everything else is one click from here and one
+           click back, so nothing in the game is more than two clicks deep. -->
+      <div class="screen" id="scrHome">
+        <p>a planet of your own</p>
+        <div id="homeGrid">
+          <button class="home" data-go="new">New world
+            <small>a size, a kind, and a way to play</small></button>
+          <button class="home" data-go="load">Load world
+            <small>every world you have made, as you left it</small></button>
+          <button class="home" data-go="settings">Settings
+            <small>how it looks, who you are, and how hard it works</small></button>
+          <!-- Where the things made in KherveCAD GO: every creature it has
+               sent, walking on a stand, and a button that brings one into
+               the world in front of you. See creatures.html. -->
+          <button class="home" id="creatureBookBtn">Creatures
+            <small>everything sent from KherveCAD, walking &mdash; and one
+              brought here</small></button>
+          <!-- The dressing room used to stand here, beside "new world" and
+               "load world" — which put a wardrobe on the same shelf as the
+               two things you actually came to the front door for. It is a
+               setting: it is how you look, it belongs with how the game
+               looks, and it is one click further in rather than one click
+               fewer. See scrSettings. -->
+          <!-- The front door had every way in and no way out. It saves the
+               world before it goes; see quitBtn in js/main.js. -->
+          <button class="home" data-click="quitBtn">Exit
+            <small>save, and close the game</small></button>
+        </div>
+        <!-- The front door had no way back out, because until the overview
+             grew a "back to menu" there was never a world behind it. Shown
+             only once there is one to return to; see js/orbitmenu.js. -->
+        <button class="back" id="resumeBtn" hidden>&larr; back to your world</button>
+        <!-- WHO IS RUNNING THE VILLAGES, and whether it is answering. Written
+             here rather than only in the settings card because a player who
+             has just put a key in wants to know it took, and the front screen
+             is where they are standing. main.js fills it in; it says nothing
+             at all until there is something to say. -->
+        <div id="chiefSign"></div>
+      </div>
+
+      <div class="screen" id="scrNew" hidden>
+        <p>choose the size of your world</p>
+        <div id="sizes">
+          <button class="size" data-r="30">Very tiny<br><small>radius 30</small></button>
+          <button class="size" data-r="50">Tiny<br><small>radius 50</small></button>
+          <button class="size" data-r="78">Small<br><small>radius 78</small></button>
+          <button class="size sel" data-r="156">Medium<br><small>radius 156</small></button>
+          <button class="size" data-r="200">Large<br><small>radius 200</small></button>
+          <button class="size" data-r="400">Huge<br><small>radius 400</small></button>
+          <button class="size" data-r="800">Massive<br><small>radius 800 &middot; 10&times;</small></button>
+        </div>
+        <p style="margin:0 0 8px">what kind of world?</p>
+        <div id="presets">
+          <button class="preset sel" data-p="terran">Terran</button>
+          <button class="preset" data-p="ocean">Ocean</button>
+          <button class="preset" data-p="city">City</button>
+          <button class="preset" data-p="storm">Storm</button>
+          <button class="preset" data-p="ice">Ice</button>
+          <button class="preset" data-p="coal">Coal</button>
+          <button class="preset" data-p="iron">Iron</button>
+          <button class="preset" data-p="volcanic">Volcanic</button>
+          <button class="preset" data-p="flat">Flat</button>
+        </div>
+        <p style="margin:0 0 8px">how do you want to play?</p>
+        <div id="modes">
+          <button class="mode sel" data-mode="survival">Survival<br>
+            <small>hearts, hunger, zombies bite</small></button>
+          <button class="mode" data-mode="creative">Creative<br>
+            <small>fly, unlimited blocks, no harm</small></button>
+          <button class="mode" data-mode="designer">Designer<br>
+            <small>a flat world, copy and paste</small></button>
+          <button class="mode" data-mode="attack">Attack<br>
+            <small>armed from the start, players are targets</small></button>
+        </div>
+        <p style="margin:0 0 8px">call it something</p>
+        <input id="worldName" class="field" maxlength="40" placeholder="world name">
+        <button id="createBtn">Create world</button>
+        <div id="menuStatus"></div>
+        <!-- netui.js hangs the co-op panel here: every world you make is
+             served to the network, so this is where the door to it lives -->
+        <div id="netHome"></div>
+        <button class="back" data-go="home">&larr; back</button>
+      </div>
+
+      <div class="screen" id="scrLoad" hidden>
+        <p>every world you have made</p>
+        <div id="saveGrid"></div>
+        <div id="loadStatus"></div>
+        <button class="back" data-go="home">&larr; back</button>
+      </div>
+
+      <div class="screen" id="scrSettings" hidden>
+        <p>how should it look?</p>
+        <div id="styles"></div>
+        <div id="styleBlurb"></div>
+        <!-- Right under the styles, because that is what a painted block is
+             attached to: an override sits ON one style, keyed by style and
+             tile, and every tile you never touch still comes from the
+             generator. The maker is a page of its own and had nothing
+             anywhere pointing at it. -->
+        <p style="margin:0 0 8px">not happy with a block?</p>
+        <button class="home tool" id="blockMakerBtn">Block maker
+          <small>paint one texel by texel — it replaces that block in the
+            style you painted it for, and nowhere else</small></button>
+        <!-- The designs saved with the planner, each rendered in miniature.
+             Double-click opens one on a drafting table of its own; the ✕
+             deletes the file, which is the only copy. main.js fills this in
+             whenever the screen is shown. -->
+        <p style="margin:14px 0 8px">your saved designs</p>
+        <div id="designGrid"></div>
+        <div id="designStatus"></div>
+        <!-- WHO YOU ARE. Moved off the front door, where it sat beside "new
+             world" as though picking a shirt were one of the things you open
+             the game to do. How you look is a setting like every other one on
+             this screen. -->
+        <p style="margin:14px 0 8px">who are you?</p>
+        <div class="vrow" style="margin-bottom:10px">
+          <span>your name</span>
+          <input id="setName" class="field" maxlength="24"
+            placeholder="your name" autocomplete="off" spellcheck="false"
+            style="flex:1;min-width:0">
+        </div>
+        <button class="home tool" data-go="dress">Skin maker
+          <small>the KherveSkins maker, in this window — a photograph, a
+            generator, a wardrobe and a painter, and the skin you save is the
+            skin you wear</small></button>
+        <p style="margin:14px 0 8px">how hard should it work?</p>
+        <div id="video"></div>
+        <p style="margin:14px 0 8px">how should it sound?</p>
+        <div id="sound"></div>
+        <!-- Who runs the villages. The game plays exactly the same with the
+             program chosen and no key anywhere — see rule 4 in CLAUDE.md — so
+             this whole card is opt-in and every field in it may be blank. -->
+        
+        <div id="chiefCfg"></div>
+        <button class="back" data-go="home">&larr; back</button>
+      </div>
+
+    </div>
+  </div>
+  <!-- The frame is left empty until the button is pressed: the block maker
+       builds an atlas of its own on load, and nobody who never opens it
+       should pay for that. -->
+  <div id="blockMaker" hidden>
+    <div class="bar">
+      <b>Block maker</b>
+      <span class="grow"></span>
+      <button id="blockMakerClose">&larr; back to the game</button>
+    </div>
+    <iframe id="blockMakerFrame" title="Block maker"></iframe>
+  </div>
+  <!-- The skin maker: KherveSkins, whole, in the game's own window. The
+       frame stays empty until the button is pressed, for the same reason the
+       block maker's does. "Wear it in the game" inside the maker posts the
+       finished PNG across; js/main.js dresses the man and closes this. -->
+  <div id="skinMaker" hidden>
+    <div class="bar">
+      <b>Skin maker</b>
+      <span class="grow"></span>
+      <button id="skinMakerClose">&larr; back to the game</button>
+    </div>
+    <iframe id="skinMakerFrame" title="Skin maker"></iframe>
+  </div>
+  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/orbitmenu.js"></script>
+  <!-- The Creatures book, the same way: an empty frame until it is opened. -->
+  <div id="creatureBook" hidden>
+    <div class="bar">
+      <b>Creatures</b>
+      <span>&middot; made in KherveCAD</span>
+      <span class="grow"></span>
+      <button id="creatureBookClose">&larr; back to the game</button>
+    </div>
+    <iframe id="creatureBookFrame" title="Creatures"></iframe>
+  </div>
+  <script type="module" src="js/blockmaker.js"></script>
+  <script type="module" src="js/creaturebook.js"></script>
+</body>
+</html>

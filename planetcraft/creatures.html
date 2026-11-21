@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PlanetCraft — creatures</title>
+  <!-- THE CREATURES BOOK. Everything KherveCAD has sent, built and posed by
+       the game's own code (creatureModel in js/entities.js), so what walks
+       on this stand is what walks in the world. It asks the folder again
+       every few seconds, so a creature sent while it is open turns up in the
+       list; inside the game (menu ▸ Creatures) it can also bring one into
+       the world in front of you. -->
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b1020; color: #cfd8ea;
+      font: 13px "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+    #wrap { display: flex; height: 100%; }
+    #left { width: 250px; padding: 12px; box-sizing: border-box; overflow-y: auto;
+      border-right: 1px solid rgba(255,255,255,.12); }
+    #mid { flex: 1; position: relative; min-width: 0; }
+    #right { width: 290px; padding: 12px; box-sizing: border-box; overflow-y: auto;
+      border-left: 1px solid rgba(255,255,255,.12); }
+    h1 { font-size: 15px; color: #fff; margin: 0 0 4px; }
+    h2 { font-size: 12px; margin: 16px 0 6px; text-transform: uppercase;
+      letter-spacing: .04em; opacity: .7; }
+    .hint { opacity: .65; line-height: 1.5; font-size: 12px; }
+    button, input[type=text] {
+      background: #1b2540; color: #cfd8ea; border: 1px solid rgba(255,255,255,.2);
+      border-radius: 6px; font: 12px "Segoe UI", sans-serif; padding: 5px 9px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #7fb3ff; color: #fff; }
+    button.on { background: #3d78d8; color: #fff; border-color: #6ba0ff; }
+    button:disabled { opacity: .45; cursor: default; }
+    #find { width: 100%; box-sizing: border-box; margin: 10px 0 8px; cursor: text; }
+    #list { display: flex; flex-direction: column; gap: 4px; }
+    .item { display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+      border-radius: 7px; cursor: pointer; border: 1px solid transparent;
+      background: rgba(255,255,255,.03); }
+    .item:hover { background: rgba(255,255,255,.07); }
+    .item.sel { border-color: #6ba0ff; background: rgba(61,120,216,.18); }
+    .item b { color: #fff; font-weight: 600; flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item small { opacity: .6; }
+    .badge { display: inline-block; font-size: 10px; padding: 1px 6px;
+      border-radius: 9px; text-transform: uppercase; letter-spacing: .05em; }
+    .badge.monster { background: #7a1f24; color: #ffd9dc; }
+    .badge.person { background: #1f4e7a; color: #d9ecff; }
+    .badge.animal { background: #2e6b33; color: #dcf7df; }
+    .badge.new { background: #c99a1a; color: #231a00; }
+    .badge.here { background: #394566; color: #dfe7ff; }
+    #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+      background: rgba(11,16,32,.72); padding: 6px; border-radius: 10px; }
+    #caption { position: absolute; left: 14px; top: 12px; pointer-events: none;
+      text-shadow: 0 1px 3px #000; }
+    #caption b { font-size: 18px; color: #fff; display: block; }
+    #none { position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; text-align: center; padding: 30px; }
+    #none[hidden] { display: none; }
+    table { border-collapse: collapse; width: 100%; }
+    td { padding: 3px 0; vertical-align: top; }
+    td:first-child { opacity: .6; width: 42%; }
+    .joint { display: inline-block; margin: 0 4px 4px 0; padding: 2px 7px;
+      border-radius: 6px; font-size: 11px; }
+    .joint.yes { background: rgba(80,190,120,.2); color: #b6f0c8; }
+    .joint.no { background: rgba(255,255,255,.05); color: #7d879c;
+      text-decoration: line-through; }
+    #advice p { margin: 6px 0; }
+    #bring { width: 100%; padding: 8px; font-size: 13px; margin-top: 6px; }
+    #status { min-height: 1.4em; margin-top: 6px; font-size: 12px; }
+    #status.good { color: #8ce8a8; } #status.bad { color: #ff9d9d; }
+    ol { padding-left: 18px; margin: 6px 0; }
+    ol li { margin: 4px 0; }
+    code { background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="wrap">
+    <div id="left">
+      <h1>Creatures</h1>
+      <div class="hint">Everything sent from KherveCAD. One sent while this
+        is open turns up here within a few seconds &mdash; and in your world,
+        in front of you.</div>
+      <input id="find" type="text" placeholder="find one&hellip;">
+      <div id="list"></div>
+      <h2>Make one</h2>
+      <ol class="hint">
+        <li>In <b>KherveCAD</b>: <b>Library &#9656; Toys &amp; models &#9656;
+          Monsters</b> has a troll, a dragon, a spider and a dozen more,
+          ready to walk. Change it however you like.</li>
+        <li>Or model your own, and <b>name its pieces</b>: <code>Head</code>,
+          <code>Tail</code>, <code>Left wing</code> / <code>Right wing</code>,
+          and each leg &mdash; <code>Left leg</code>, <code>Front right
+          leg</code>&hellip; A named piece is a joint: legs swing at the top,
+          the head nods at its neck.</li>
+        <li><b>File &#9656; Send to PlanetCraft&hellip;</b> and say what it
+          is: an animal, a person, or a <b>monster</b> that hunts you.</li>
+        <li>It walks up to you here, and appears in this book.</li>
+      </ol>
+      <div class="hint">With Claude in KherveCAD, just ask &mdash; &ldquo;make
+        me a troll for PlanetCraft&rdquo;: it has <code>build_creature</code>
+        and <code>send_to_planetcraft</code>.</div>
+    </div>
+
+    <div id="mid">
+      <canvas id="view"></canvas>
+      <div id="caption"><b id="capName"></b><span id="capWhat"></span></div>
+      <div id="none" class="hint" hidden>Nothing has been sent from KherveCAD
+        yet.<br>See &ldquo;Make one&rdquo; on the left &mdash; this book fills
+        in by itself.</div>
+      <div id="bar">
+        <button class="gait" data-g="stand">stand</button>
+        <button class="gait on" data-g="walk">walk</button>
+        <button class="gait" data-g="run">run</button>
+        <button class="gait" data-g="strike">strike</button>
+        <button id="turnBtn" class="on">turn</button>
+        <button id="jointBtn">joints</button>
+        <button id="youBtn" class="on">you, for size</button>
+      </div>
+    </div>
+
+    <div id="right">
+      <h2 style="margin-top:0">What the game makes of it</h2>
+      <table id="facts"></table>
+      <h2>Joints</h2>
+      <div id="joints"></div>
+      <div id="advice" class="hint"></div>
+      <div id="inGame" hidden>
+        <h2>In this world</h2>
+        <div id="here" class="hint"></div>
+        <button id="bring">Bring one here</button>
+      </div>
+      <div id="outGame" class="hint" hidden>
+        <h2>In your world</h2>
+        Open the game's menu &#9656; <b>Creatures</b> to bring one in front
+        of you.
+      </div>
+      <div id="status"></div>
+      <h2>The file</h2>
+      <table id="file"></table>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { creatureModel, customCreature } from './js/entities.js';
+    import { loadCreatures, checkCreatures, creatureFiles } from './js/creatures.js';
+
+    const $ = (id) => document.getElementById(id);
+    const inGame = parent !== window;
+    const ask = (msg) => { if (inGame) parent.postMessage(msg, location.origin); };
+    const say = (m, cls = '') => { $('status').textContent = m; $('status').className = cls; };
+
+    // --- the stand -------------------------------------------------------------
+    const canvas = $('view');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x121a30);
+    scene.fog = new THREE.Fog(0x121a30, 30, 60);
+    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x303848, 1.1));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+    sun.position.set(3, 6, -4);
+    scene.add(sun);
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 200);
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 1.2;
+
+    // the ground: one line a block, so a size is counted rather than guessed
+    const grid = new THREE.GridHelper(24, 24, 0x5a6a90, 0x2b3552);
+    scene.add(grid);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(12, 48),
+      new THREE.MeshLambertMaterial({ color: 0x1b2440 }));
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.y = -0.005;
+    scene.add(disc);
+
+    // "you", for size: a player is a block and four fifths tall
+    const you = new THREE.Group();
+    const youMat = new THREE.MeshLambertMaterial({ color: 0x6f86b8, transparent: true, opacity: 0.55 });
+    const box = (w, h, d, x, y) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), youMat);
+      m.position.set(x, y, 0);
+      you.add(m);
+    };
+    box(0.24, 0.72, 0.24, -0.13, 0.36); box(0.24, 0.72, 0.24, 0.13, 0.36);
+    box(0.5, 0.66, 0.26, 0, 1.05); box(0.2, 0.62, 0.2, -0.36, 1.06);
+    box(0.2, 0.62, 0.2, 0.36, 1.06); box(0.42, 0.42, 0.42, 0, 1.6);
+    scene.add(you);
+
+    let last = performance.now(), t = 0;
+    const jointMat = new THREE.MeshBasicMaterial({ color: 0xffd166, depthTest: false });
+    let model = null, kindShown = null, gait = 'walk', showJoints = false;
+    const jointDots = [];
+
+    function show(kind) {
+      if (model) { scene.remove(model.group); model = null; }
+      for (const d of jointDots) d.parent?.remove(d);
+      jointDots.length = 0;
+      kindShown = kind;
+      const def = kind ? customCreature(kind) : null;
+      $('none').hidden = !!def || creatureFiles().length > 0;
+      if (!def) { render(); return; }
+      model = creatureModel(kind);
+      if (!model) return;
+      scene.add(model.group);
+      // the joints: a dot where each part turns
+      for (const k of ['neck', 'legFL', 'legFR', 'legBL', 'legBR', 'tail', 'wingL', 'wingR']) {
+        const j = model.parts[k];
+        if (!j || !j.children.length) continue;
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), jointMat);
+        dot.renderOrder = 10;
+        dot.visible = showJoints;
+        j.add(dot);
+        jointDots.push(dot);
+      }
+      const box3 = new THREE.Box3().setFromObject(model.group);
+      const size = box3.getSize(new THREE.Vector3());
+      you.position.set(box3.min.x - 0.6, 0, 0);
+      frameIt(box3);
+      describe(def);
+      $('capName').textContent = def.label;
+      $('capWhat').textContent = ` ${def.nature}, ${(+def.height).toFixed(1)} blocks`;
+      model.pose(t, 0, gait);
+      render();
+    }
+
+    // Far enough back that the whole of it and "you" beside it fit the
+    // NARROWER way of the window: a tall pane crops sideways, a wide one from
+    // the top, and a dragon is both.
+    let framed = null;
+    const VIEW = new THREE.Vector3(0.62, 0.30, -0.78).normalize();
+    function frameIt(box3 = framed) {
+      if (!box3) return;
+      framed = box3;
+      resize();
+      // every vertex of it (and of "you"), seen along the camera's own right
+      // and up: a box's corners are mostly air round a dragon's wings
+      const right = new THREE.Vector3().crossVectors(VIEW, new THREE.Vector3(0, 1, 0))
+        .normalize();
+      const up = new THREE.Vector3().crossVectors(right, VIEW).normalize();
+      const pts = [];
+      const v = new THREE.Vector3();
+      for (const root of [model?.group, you.visible ? you : null]) {
+        root?.updateMatrixWorld(true);
+        root?.traverse((o) => {
+          if (!o.isMesh || !o.visible || o.material === jointMat) return;
+          const a = o.geometry.attributes.position;
+          const step = Math.max(1, Math.floor(a.count / 4000));
+          for (let i = 0; i < a.count; i += step) {
+            pts.push(v.fromBufferAttribute(a, i).applyMatrix4(o.matrixWorld).clone());
+          }
+        });
+      }
+      if (!pts.length) return;
+      let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity], deep = -Infinity;
+      for (const p of pts) {
+        const x = p.dot(right), y = p.dot(up);
+        lo = [Math.min(lo[0], x), Math.min(lo[1], y)];
+        hi = [Math.max(hi[0], x), Math.max(hi[1], y)];
+      }
+      const cx = (lo[0] + hi[0]) / 2, cy = (lo[1] + hi[1]) / 2;
+      const halfW = (hi[0] - lo[0]) / 2, halfH = (hi[1] - lo[1]) / 2;
+      // the centre, back on the plane through the middle of it
+      const mid = box3.getCenter(new THREE.Vector3());
+      const along = mid.dot(VIEW);
+      const centre = right.clone().multiplyScalar(cx).addScaledVector(up, cy)
+        .addScaledVector(VIEW, along);
+      for (const p of pts) deep = Math.max(deep, p.dot(VIEW) - along);
+      const half = THREE.MathUtils.degToRad(camera.fov / 2);
+      const across = Math.atan(Math.tan(half) * camera.aspect);
+      const dist = Math.max(3, deep + 1.12 * Math.max(halfW / Math.tan(across),
+        halfH / Math.tan(half)));
+      controls.target.copy(centre);
+      camera.position.copy(centre).addScaledVector(VIEW, dist);
+      controls.update();
+      // the fog follows the camera out, or a big creature is seen through it
+      scene.fog.near = dist * 1.4;
+      scene.fog.far = dist * 3.2;
+      grid.scale.setScalar(Math.max(1, dist / 12));
+      disc.scale.setScalar(Math.max(1, dist / 12));
+    }
+    let lastW = 0, lastH = 0;
+    function resize() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h || (w === lastW && h === lastH)) return;
+      lastW = w; lastH = h;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      if (framed) frameIt();
+    }
+    addEventListener('resize', resize);
+
+    function render() {
+      resize();
+      renderer.render(scene, camera);
+    }
+    function frame(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      t += dt;
+      model?.pose(t, dt, gait);
+      controls.update();
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    document.querySelectorAll('.gait').forEach((b) => {
+      b.onclick = () => {
+        gait = b.dataset.g;
+        document.querySelectorAll('.gait').forEach((x) => x.classList.toggle('on', x === b));
+      };
+    });
+    $('turnBtn').onclick = () => {
+      controls.autoRotate = !controls.autoRotate;
+      $('turnBtn').classList.toggle('on', controls.autoRotate);
+    };
+    $('jointBtn').onclick = () => {
+      showJoints = !showJoints;
+      $('jointBtn').classList.toggle('on', showJoints);
+      for (const d of jointDots) d.visible = showJoints;
+    };
+    $('youBtn').onclick = () => {
+      you.visible = !you.visible;
+      $('youBtn').classList.toggle('on', you.visible);
+      frameIt();
+    };
+
+    // --- what the game makes of it -----------------------------------------------
+    const NATURE_WHY = {
+      monster: 'hunts you, and fights back',
+      person: 'walks about and turns to look at you',
+      animal: 'grazes, and bolts when it is hit',
+    };
+    const JOINTS = [['head', 'Head'], ['legFL', 'Front left leg'], ['legFR', 'Front right leg'],
+      ['legBL', 'Back left leg'], ['legBR', 'Back right leg'], ['tail', 'Tail'],
+      ['wingL', 'Left wing'], ['wingR', 'Right wing']];
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    function describe(def) {
+      const roles = new Set(def.parts.filter((p) => p.positions?.length >= 9).map((p) => p.role));
+      const legs = ['legFL', 'legFR', 'legBL', 'legBR'].filter((r) => roles.has(r)).length;
+      const why = def.sentNature && def.sentNature !== 'auto' ? 'you said so'
+        : def.nature === 'monster' ? 'its name says so'
+          : def.nature === 'person' ? 'it stands upright on two legs' : 'the default';
+      const gaitWord = legs === 0 ? 'no legs &mdash; it bobs along'
+        : legs === 2 ? 'walks on two legs' : legs === 4 ? 'four legs' : `${legs} legs`;
+      const rows = [
+        ['it is', `<span class="badge ${def.nature}">${def.nature}</span> &mdash; ${NATURE_WHY[def.nature] ?? ''} <small>(${why})</small>`],
+        ['height', `${(+def.height).toFixed(2)} blocks &middot; ${(def.height / 1.8).toFixed(1)}&times; you`],
+        ['on its feet', gaitWord],
+        ['speed', `${(+(def.speed ?? 1)).toFixed(2)} <small>(a person walks at 1)</small>`],
+        ['health', `${def.health ?? 10} <small>(you have 20)</small>`],
+      ];
+      if (def.nature === 'monster') {
+        const dmg = def.damage ?? Math.round(Math.min(8, Math.max(2, 1 + def.height * 1.3)));
+        rows.push(['a blow takes', `${dmg} ${def.damage == null ? '<small>(from its size)</small>' : ''}`]);
+      }
+      rows.push(['roams the wild', def.wild === false ? 'no' : 'yes, in every new world']);
+      $('facts').innerHTML = rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+      const knees = ['shinFL', 'shinFR', 'shinBL', 'shinBR'].filter((r) => roles.has(r)).length;
+      $('joints').innerHTML = JOINTS.filter(([r]) => !(legs === 2 && (r === 'legBL' || r === 'legBR')))
+        .map(([r, name]) => `<span class="joint ${roles.has(r) ? 'yes' : 'no'}">${
+          legs === 2 && r === 'legFL' ? 'Left leg' : legs === 2 && r === 'legFR' ? 'Right leg' : name}</span>`)
+        .join('') + (knees ? `<span class="joint yes">${knees === 1 ? 'a knee' : `${knees} knees`}</span>` : '');
+      const tips = [];
+      if (!roles.has('head')) tips.push('No <b>head</b> joint: name the head’s group <code>Head</code> in KherveCAD and it will nod and look about.');
+      if (legs === 0 && def.plan !== 'serpent' && def.plan !== 'slime') {
+        tips.push('No <b>legs</b> were found, so it bobs along. Name each leg &mdash; <code>Left leg</code>, <code>Front right leg</code>&hellip; &mdash; or start from a monster in KherveCAD’s Library.');
+      }
+      if (legs === 1 || legs === 3) tips.push(`Only ${legs} leg${legs > 1 ? 's' : ''}: a leg whose name says neither its side nor its end is placed by where it stands &mdash; say both.`);
+      if (def.auto_legs) tips.push('Its legs were <b>found by themselves</b> (nothing was named). If they look wrong, name them in KherveCAD.');
+      if (def.height > 6) tips.push('Taller than six blocks: it will not fit through a village street. Send it with a height in blocks to shrink it.');
+      $('advice').innerHTML = tips.map((x) => `<p>${x}</p>`).join('');
+      const f = creatureFiles().find((x) => x.def === def);
+      const file = [
+        ['file', `creatures/${esc(f?.name)}.json`],
+        ['kind', `<code>${esc(def.kind)}</code>`],
+        ['made by', esc(def.source ?? 'KherveCAD') + (def.plan ? ` &middot; ${esc(def.plan)} plan` : '')],
+        ['triangles', (def.triangles ?? def.parts.reduce((n, p) => n + (p.positions?.length ?? 0) / 9, 0)).toLocaleString()],
+      ];
+      if (f?.sent) file.push(['sent', esc(new Date(f.sent).toLocaleString())]);
+      $('file').innerHTML = file.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+      updateHere();
+    }
+
+    // --- the list ----------------------------------------------------------------
+    let filter = '';
+    const fresh = new Set();          // arrived while the book was open
+    let counts = {};                  // how many of each are in the world
+    let worldOpen = false;
+    function drawList() {
+      const box = $('list');
+      box.textContent = '';
+      const all = creatureFiles().sort((a, b) => a.def.label.localeCompare(b.def.label));
+      for (const { def } of all) {
+        if (filter && !`${def.label} ${def.kind} ${def.nature}`.toLowerCase().includes(filter)) continue;
+        const el = document.createElement('div');
+        el.className = `item${def.kind === kindShown ? ' sel' : ''}`;
+        el.innerHTML = `<b>${esc(def.label)}</b>`
+          + (fresh.has(def.kind) ? '<span class="badge new">new</span>' : '')
+          + (counts[def.kind] ? `<span class="badge here" title="in this world">${counts[def.kind]}</span>` : '')
+          + `<span class="badge ${def.nature}">${def.nature}</span>`
+          + `<small>${(+def.height).toFixed(1)}</small>`;
+        el.onclick = () => pick(def.kind);
+        box.appendChild(el);
+      }
+      $('none').hidden = all.length > 0;
+    }
+    function pick(kind) {
+      history.replaceState(null, '', `#${kind}`);
+      show(kind);
+      drawList();
+    }
+    $('find').addEventListener('input', (e) => { filter = e.target.value.trim().toLowerCase(); drawList(); });
+
+    // --- the game behind the frame -------------------------------------------------
+    function updateHere() {
+      $('inGame').hidden = !inGame;
+      $('outGame').hidden = inGame;
+      if (!inGame || !kindShown) return;
+      const n = counts[kindShown] ?? 0;
+      $('here').textContent = !worldOpen ? 'No world is open yet: make or load one, then bring it in.'
+        : n ? `${n} in this world.` : 'None in this world yet.';
+      $('bring').disabled = !worldOpen;
+    }
+    addEventListener('message', (e) => {
+      if (e.origin !== location.origin) return;
+      if (e.data === 'creaturebook:shown') { ask({ type: 'creatures:census' }); return; }
+      if (!String(e.data?.type ?? '').startsWith('creatures:')) return;
+      counts = e.data.counts ?? counts;
+      worldOpen = !!e.data.world;
+      if (e.data.type === 'creatures:summoned') {
+        if (e.data.ok) {
+          say(`${customCreature(e.data.kind)?.label ?? 'It'} is in front of you.`, 'good');
+          // close the book, so the first thing you see is the thing you made
+          setTimeout(() => parent.postMessage('creaturebook:close', location.origin), 350);
+        } else say(`Could not bring it: ${e.data.why}.`, 'bad');
+      }
+      drawList();
+      updateHere();
+    });
+    $('bring').onclick = () => {
+      if (!kindShown) return;
+      say('bringing it…');
+      ask({ type: 'creatures:summon', kind: kindShown });
+    };
+
+    // --- start, and keep looking ---------------------------------------------------
+    await loadCreatures();
+    const want = decodeURIComponent(location.hash.slice(1));
+    const first = creatureFiles().find((f) => f.def.kind === want)
+      ?? creatureFiles().sort((a, b) => a.def.label.localeCompare(b.def.label))[0];
+    show(first?.def.kind ?? null);
+    drawList();
+    ask({ type: 'creatures:census' });
+    requestAnimationFrame(frame);
+    document.documentElement.dataset.ready = '1';
+
+    setInterval(async () => {
+      if (document.hidden) return;
+      const r = await checkCreatures();
+      for (const k of [...r.added, ...r.updated]) fresh.add(k);
+      if (r.added.length || r.updated.length || r.removed.length) {
+        // a creature sent again is shown again, as it is now
+        const now = r.added[0] ?? r.updated.find((k) => k === kindShown) ?? null;
+        if (now) show(now);
+        else if (r.removed.includes(kindShown)) show(creatureFiles()[0]?.def.kind ?? null);
+        drawList();
+        if (r.added.length) say(`${r.added.map((k) => customCreature(k)?.label ?? k).join(', ')} just arrived.`, 'good');
+      }
+      ask({ type: 'creatures:census' });
+    }, 4000);
+    addEventListener('hashchange', () => {
+      const k = decodeURIComponent(location.hash.slice(1));
+      if (k && k !== kindShown && customCreature(k)) { show(k); drawList(); }
+    });
+
+    // Escape closes the book when it is the game's frame
+    addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && inGame) parent.postMessage('creaturebook:close', location.origin);
+    });
+
+    // the harness
+    window.__show = (kind) => { pick(kind); return kindShown; };
+    window.__gait = (g) => { gait = g; return gait; };
+    window.__step = (seconds = 0.5, dt = 1 / 30) => {
+      for (let s = 0; s < seconds; s += dt) { t += dt; model?.pose(t, dt, gait); }
+      controls.update(); render(); return t;
+    };
+    window.__creatures = () => creatureFiles().map(({ def }) => ({
+      kind: def.kind, label: def.label, nature: def.nature, height: def.height,
+      parts: def.parts.map((p) => p.role),
+    }));
+    window.__joints = (on = true) => { if (showJoints !== on) $('jointBtn').onclick(); return showJoints; };
+    window.__turn = (on = true) => { if (controls.autoRotate !== on) $('turnBtn').onclick(); return on; };
+  </script>
+</body>
+</html>

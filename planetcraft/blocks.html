@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PlanetCraft — block maker</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b1020; color: #cfd8ea;
+      font: 13px "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+    #wrap { display: flex; height: 100%; }
+    #left { width: 210px; padding: 12px; box-sizing: border-box; overflow-y: auto;
+      border-right: 1px solid rgba(255,255,255,.12); }
+    #mid { flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 12px; padding: 12px; box-sizing: border-box; }
+    #right { width: 260px; padding: 12px; box-sizing: border-box; overflow-y: auto;
+      border-left: 1px solid rgba(255,255,255,.12); }
+    h1 { font-size: 15px; color: #fff; margin: 0 0 2px; }
+    h2 { font-size: 12px; margin: 14px 0 6px; text-transform: uppercase;
+      letter-spacing: .04em; opacity: .7; }
+    h2:first-child { margin-top: 0; }
+    .hint { opacity: .6; line-height: 1.5; font-size: 12px; }
+    button, select, input[type=text] {
+      background: #1b2540; color: #cfd8ea; border: 1px solid rgba(255,255,255,.2);
+      border-radius: 6px; font: 12px "Segoe UI", sans-serif; padding: 5px 9px;
+      cursor: pointer;
+    }
+    button.on { background: #3d78d8; color: #fff; border-color: #6ba0ff; }
+    button:disabled { opacity: .45; cursor: default; }
+    #tileFind { width: 100%; box-sizing: border-box; margin-bottom: 6px;
+      cursor: text; }
+    #tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    #tiles canvas {
+      width: 100%; aspect-ratio: 1; image-rendering: pixelated; cursor: pointer;
+      border: 2px solid transparent; border-radius: 4px; background: #000;
+    }
+    #tiles canvas.sel { border-color: #6ba0ff; }
+    #paint.waiting, #ref.waiting { opacity: .35; pointer-events: none; }
+    #boardNote { max-width: 520px; text-align: center; }
+    #paint { image-rendering: pixelated; cursor: crosshair; touch-action: none;
+      border: 1px solid rgba(255,255,255,.25); border-radius: 4px;
+      background: repeating-conic-gradient(#2a3350 0 25%, #202840 0 50%) 0 0 / 16px 16px; }
+    #preview { image-rendering: pixelated; border-radius: 4px; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .row label { flex: 1; }
+    #swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+    #swatches i { display: block; aspect-ratio: 1; border-radius: 3px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,.18); }
+    #status { display: block; margin-top: 8px; min-height: 2.6em; font-size: 12px; }
+    #status.good { color: #8ce8a8; } #status.bad { color: #ff9d9d; }
+
+    /* THE TWO BOARDS. The one you are painting and the one you are copying
+       FROM, side by side and the same size, because the whole point is to take
+       a corner off one and put it on the other. */
+    #boards { display: flex; gap: 16px; align-items: flex-start; }
+    .board { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .board h3 { margin: 0; font-size: 11px; letter-spacing: .06em; opacity: .7;
+      text-transform: uppercase; }
+    .stack { position: relative; line-height: 0; }
+    .stack canvas { position: relative; }
+    /* the marching rectangle: an overlay, so the selection never touches the
+       texels underneath it */
+    .stack .sel-box {
+      position: absolute; pointer-events: none; box-sizing: border-box;
+      border: 1px dashed #ffd166; background: rgba(255,209,102,.14);
+      box-shadow: 0 0 0 1px rgba(0,0,0,.6) inset;
+    }
+    #ref { image-rendering: pixelated; border: 1px solid rgba(255,255,255,.16);
+      border-radius: 4px; opacity: .95;
+      background: repeating-conic-gradient(#2a3350 0 25%, #202840 0 50%) 0 0 / 16px 16px; }
+    .mini { font-size: 11px; padding: 3px 7px; }
+    select.mini { padding: 3px 5px; max-width: 150px; }
+    #tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    #tools button { padding: 5px 4px; font-size: 11px; }
+    .row.wrap { flex-wrap: wrap; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="wrap">
+    <div id="left">
+      <h1>Block maker</h1>
+      <div class="hint">Pick a style, pick a block, paint it. What you paint is
+        saved against that style only. Realistic is the photographs: you paint
+        over one at its own 256 texels, and what you leave alone stays the
+        photograph.</div>
+      <h2>Style</h2>
+      <select id="style"></select>
+      <h2>Block</h2>
+      <!-- 278 tiles is more than an eye finds by scanning. The swatches are
+           16 pixels square and several dozen of them are a shade of brown, so
+           "where is water" was a real question with a real answer nobody
+           could see. Type to narrow the grid. -->
+      <input id="tileFind" type="text" placeholder="find a block — water, log, glass&hellip;">
+      <div id="tiles"></div>
+      <div id="tileNone" class="hint" hidden>nothing by that name</div>
+    </div>
+
+    <div id="mid">
+      <div id="boards">
+        <div class="board">
+          <h3 id="tileName"></h3>
+          <div class="stack">
+            <canvas id="paint" width="32" height="32"></canvas>
+            <div class="sel-box" id="selBox" hidden></div>
+          </div>
+          <div class="row">
+            <button id="undoBtn" class="mini">undo</button>
+            <button id="redoBtn" class="mini">redo</button>
+            <button id="revertBtn" class="mini">revert</button>
+          </div>
+        </div>
+        <!-- THE REFERENCE. Any style's version of any tile, beside the one you
+             are painting, so "make the desert brick look like the classic one"
+             is a look and a click rather than a memory test. -->
+        <div class="board">
+          <h3>reference</h3>
+          <div class="stack">
+            <canvas id="ref" width="32" height="32"></canvas>
+            <div class="sel-box" id="refSelBox" hidden></div>
+          </div>
+          <div class="row wrap">
+            <select id="refStyle" class="mini"></select>
+            <select id="refTile" class="mini"></select>
+          </div>
+          <div class="row wrap">
+            <button id="takeAll" class="mini">&larr; take all</button>
+            <button id="takeSel" class="mini">&larr; take selection</button>
+            <button id="swapBtn" class="mini">swap</button>
+          </div>
+        </div>
+      </div>
+      <div id="boardNote" class="hint"></div>
+      <canvas id="preview" width="220" height="220"></canvas>
+      <div class="hint">left-click draws &middot; right-click or alt-click picks the
+        colour under the cursor, on either board<br>
+        select a box and it becomes what copy, cut, paste, fill and
+        &ldquo;take&rdquo; act on &mdash; nothing selected means the whole tile<br>
+        ctrl+C/X/V copy, cut and paste &middot; ctrl+Z / ctrl+shift+Z undo and redo
+        &middot; arrows nudge a selection &middot; esc drops a drag</div>
+    </div>
+
+    <div id="right">
+      <h2>Colour</h2>
+      <div class="row">
+        <input type="color" id="ink" value="#8a6a44" style="width:44px;height:26px">
+        <button id="eraseBtn">transparent</button>
+      </div>
+      <h2>From this tile</h2>
+      <div id="swatches"></div>
+      <h2>Tool</h2>
+      <div id="tools">
+        <button class="tool on" data-t="pencil">pencil</button>
+        <button class="tool" data-t="line">line</button>
+        <button class="tool" data-t="rect">rectangle</button>
+        <button class="tool" data-t="circle">circle</button>
+        <button class="tool" data-t="bucket">bucket</button>
+        <button class="tool" data-t="pick">picker</button>
+        <button class="tool" data-t="select">select</button>
+        <button class="tool" data-t="stamp">stamp</button>
+        <button class="tool" data-t="swap">swap ink</button>
+      </div>
+      <div class="row">
+        <button id="fillBtn">filled</button>
+        <span class="hint">outline follows the brush size; filled ignores it</span>
+      </div>
+      <h2>Brush</h2>
+      <div class="row" id="brushes"></div>
+      <h2>Selection</h2>
+      <div class="row wrap">
+        <button id="selAll" class="mini">all</button>
+        <button id="selNone" class="mini">none</button>
+        <button id="cutBtn" class="mini">cut</button>
+        <button id="copySelBtn" class="mini">copy</button>
+        <button id="pasteBtn" class="mini">paste</button>
+        <button id="clearBtn" class="mini">clear</button>
+      </div>
+      <h2>Whole tile</h2>
+      <div class="row wrap">
+        <button id="flipH" class="mini">flip &harr;</button>
+        <button id="flipV" class="mini">flip &updownarrow;</button>
+        <button id="rotBtn" class="mini">rotate</button>
+        <button id="fillSel" class="mini">flood</button>
+        <button id="mirrorBtn" class="mini">mirror</button>
+      </div>
+      <div class="hint">flip, rotate and flood act on the selection when there
+        is one. Mirror paints both sides of the tile at once.</div>
+      <h2>Save</h2>
+      <button id="saveBtn">save this tile</button>
+      <button id="copyBtn">copy JSON</button>
+      <span id="status"></span>
+      <div class="hint">Saved tiles are used by the game for that style. A tile
+        you never touch keeps coming from the generator — and keeps improving
+        when the generator does.</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import {
+      STYLES, TILE, ATLAS, buildAtlas, setTextureStyle, currentStyle,
+      setTileOverrides, tilePixelsOf, generatedTile,
+    } from './js/textures.js';
+    import {
+      loadReal, realLayers, realTileInfo, realStatus, decodePainting,
+    } from './js/realism.js';
+    import { REAL_N } from './js/realtex.js';
+
+    // THE BOARD'S SIZE IS THE STYLE'S. Classic is pixel art at the atlas's 32
+    // texels a block. Realistic is PHOTOGRAPHS at 256 a block, and a board of
+    // 32 on it was the old painted fallback the photographs replaced — what
+    // the page used to show, and nothing the game draws any more. So its
+    // board is the photograph at its own size, and a painting is laid OVER
+    // it: what you paint is saved with a mask of where you painted, and in
+    // the game the texels you left alone stay the photograph (realism.js).
+    const AT = ATLAS.TS;          // texels a tile in the atlas
+    let TS = AT;                  // ...and on the board
+    const sizeOf = (style) => (style === 'real' ? REAL_N : AT);
+    const $ = (id) => document.getElementById(id);
+    const status = $('status');
+    const say = (m, cls = '') => { status.textContent = m; status.className = cls; };
+
+    // every tile the atlas has a name for, in atlas order
+    const TILE_NAMES = Object.keys(TILE).sort((a, b) => TILE[a] - TILE[b]);
+
+    // Open on the style the GAME opens on. The editor used to start on
+    // whatever happened to be first in the catalogue, which meant the tile
+    // you were most likely to want to paint was never the one in front of
+    // you.
+    let styleId = currentStyle().id;
+    let tile = TILE.GRASS_TOP;
+    let atlas = null;             // the generated atlas for the current style
+    let px = null;                // what is being painted: Uint8ClampedArray RGBA
+    const undo = [], redo = [];
+    let brush = 1;
+    let erasing = false;
+    let tool = 'pencil';
+    let filled = false;           // shapes: outline, or solid
+    let mirror = false;           // paint both sides of the tile at once
+
+    // THE SELECTION. A box in texels, or null for "the whole tile". It is what
+    // copy, cut, paste, flood, flip, rotate and "take from the reference" all
+    // act on, so there is one idea here rather than six — and the same box is
+    // drawn over BOTH boards, which is what makes taking a corner off the
+    // reference a matter of dragging once and pressing one button.
+    let sel = null;               // { x0, y0, x1, y1 } inclusive
+    let clip = null;              // { w, h, data } — what copy took
+
+    // ...and the reference: any style's version of any tile, beside the one
+    // being painted.
+    let refStyleId = null;
+    let refTile = null;
+    let refPx = null;
+
+    // saved overrides, by `${style}/${tile}` — the page holds them so the
+    // preview shows what the game will show
+    const saved = new Map();
+
+    async function loadSaved() {
+      try {
+        const names = await fetch('blocks/index.json').then((r) => (r.ok ? r.json() : []));
+        const list = await Promise.all(names.map((n) => fetch(`blocks/${n}.json`)
+          .then((r) => (r.ok ? r.json() : null))));
+        for (const o of list) if (o) saved.set(`${o.style}/${o.tile}`, o);
+        setTileOverrides([...saved.values()]);
+      } catch { /* none saved yet */ }
+    }
+
+    // --- the photographs -----------------------------------------------------
+    //
+    // Built once, as the game builds them at full detail, and BARE — the
+    // paintings are laid on here, over them, exactly where realism.js lays
+    // them on in the game, so the board is what the ground will be.
+    let photos = null;
+    let photosReady = false;
+    function wantPhotos() {
+      if (photos) return photos;
+      // a tinted tile takes its colour off the style's own art, so that has
+      // to have been painted on this page once
+      if (!generatedTile(0, 'real')) {
+        const was = currentStyle().id;
+        setTextureStyle('real'); buildAtlas(42).dispose(); setTextureStyle(was);
+      }
+      say('loading the photographs\u2026');
+      photos = loadReal({ N: REAL_N, paint: false }).then(() => {
+        photosReady = true;
+        const st = realStatus();
+        say(`photographs ready \u2014 ${st.layers} layers at ${st.N} texels`
+          + (st.missing.length ? `, missing ${st.missing.join(', ')}` : ''), 'good');
+      });
+      return photos;
+    }
+
+    // A buffer of RGBA at one size, at another: grown texel for texel, or
+    // shrunk by averaging, so a 32-texel classic tile lands on a 256 board as
+    // crisp eight-by-eight blocks and a photograph lands on a 32 board as the
+    // hotbar would show it.
+    function resample(src, n, to) {
+      if (n === to) return new Uint8ClampedArray(src);
+      const out = new Uint8ClampedArray(to * to * 4);
+      if (to > n) {
+        const f = to / n;
+        for (let y = 0; y < to; y++) {
+          for (let x = 0; x < to; x++) {
+            const s = (((y / f) | 0) * n + ((x / f) | 0)) * 4;
+            out.set(src.subarray(s, s + 4), (y * to + x) * 4);
+          }
+        }
+        return out;
+      }
+      const f = n / to;
+      for (let y = 0; y < to; y++) {
+        for (let x = 0; x < to; x++) {
+          let r = 0, g = 0, b = 0, a = 0;
+          for (let j = 0; j < f; j++) {
+            for (let i = 0; i < f; i++) {
+              const s = ((y * f + j) * n + x * f + i) * 4, al = src[s + 3] / 255;
+              r += src[s] * al; g += src[s + 1] * al; b += src[s + 2] * al; a += al;
+            }
+          }
+          const o = (y * to + x) * 4;
+          if (a > 0) { out[o] = r / a; out[o + 1] = g / a; out[o + 2] = b / a; }
+          out[o + 3] = (a / (f * f)) * 255;
+        }
+      }
+      return out;
+    }
+
+    // A realistic tile as nobody painted it, at `size`: the photograph's first
+    // quarter — the block a block standing on its own shows — worn as the
+    // world wears it (a metal-in-alpha tile opaque, a tinted one in its
+    // tint), or, for a tile with no photograph, the style's own pixel art.
+    const LIN = (v) => ((v / 255) <= 0.04045 ? (v / 255) / 12.92
+      : (((v / 255) + 0.055) / 1.055) ** 2.4);
+    const ENC = (v) => 255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055);
+    function realBase(t, size) {
+      const L = photosReady ? realLayers(t) : null;
+      if (!L) return resample(generatedTile(t, 'real') ?? new Uint8ClampedArray(AT * AT * 4),
+        AT, size);
+      const { N, layers } = L;
+      const info = realTileInfo(t);
+      const src = layers[0].rgba, out = new Uint8ClampedArray(N * N * 4);
+      // the arrays hold their rows bottom first, as uploaded
+      for (let y = 0; y < N; y++) out.set(src.subarray((N - 1 - y) * N * 4, (N - y) * N * 4), y * N * 4);
+      const [tr, tg, tb] = info.tint;
+      const tinted = Math.abs(tr - 1) + Math.abs(tg - 1) + Math.abs(tb - 1) > 1e-3;
+      for (let o = 0; o < out.length; o += 4) {
+        if (info.metalMask) out[o + 3] = 255;
+        if (tinted) {
+          out[o] = ENC(Math.min(1, LIN(out[o]) * tr));
+          out[o + 1] = ENC(Math.min(1, LIN(out[o + 1]) * tg));
+          out[o + 2] = ENC(Math.min(1, LIN(out[o + 2]) * tb));
+        }
+      }
+      return resample(out, N, size);
+    }
+
+    // a saved painting as texels, decoded once
+    const decoded = new Map();    // the record -> { n, rgba, mask }
+    async function decodedOf(rec) {
+      if (!decoded.has(rec)) decoded.set(rec, decodePainting(rec));
+      return decoded.get(rec);
+    }
+
+    // ...and the tile as the game will show it: the ground with the painting
+    // on it, where it was painted.
+    async function composeReal(t, size) {
+      const base = realBase(t, size);
+      const px = new Uint8ClampedArray(base);
+      const rec = saved.get(`real/${t}`);
+      if (rec) {
+        const p = await decodedOf(rec);
+        const paintPx = resample(p.rgba, p.n, size);
+        const f = size / p.n;
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const m = f >= 1 ? p.mask[((y / f) | 0) * p.n + ((x / f) | 0)]
+              : p.mask[Math.floor(y / f) * p.n + Math.floor(x / f)];
+            if (!m) continue;
+            const o = (y * size + x) * 4;
+            px.set(paintPx.subarray(o, o + 4), o);
+          }
+        }
+      }
+      return { base, px };
+    }
+
+    // what a painted realistic tile looks like in the list, made once
+    const thumbs = new Map();     // tile -> AT x AT RGBA
+    async function makeThumbs() {
+      for (const [key, rec] of saved) {
+        if (!key.startsWith('real/') || rec.version !== 2) continue;
+        const t = rec.tile;
+        if (thumbs.has(t)) continue;
+        try { thumbs.set(t, resample((await composeReal(t, REAL_N)).px, REAL_N, AT)); }
+        catch { /* a painting that will not decode shows as the photograph */ }
+      }
+    }
+
+    let regenSeq = 0;
+    async function regenerate() {
+      const my = ++regenSeq;
+      setTextureStyle(styleId);
+      if (atlas) atlas.dispose();
+      atlas = buildAtlas(42);
+      const size = sizeOf(styleId);
+      if (size !== TS) {
+        TS = size;
+        sel = null;
+        px = null;
+        resizeBoards();
+        drawBrushes();
+      }
+      drawTileList();
+      // the board waits for the photographs rather than letting anybody
+      // paint on the fallback they are about to replace
+      paint.classList.toggle('waiting', styleId === 'real' && !photosReady);
+      if (styleId === 'real' && !photosReady) {
+        await wantPhotos();
+        if (my !== regenSeq) return;
+        paint.classList.remove('waiting');
+        return regenerate();
+      }
+      if (styleId === 'real') { await makeThumbs(); if (my !== regenSeq) return; drawTileList(); }
+      await loadTile();
+      await loadRef();
+    }
+
+    // --- the tile list -------------------------------------------------------
+    // What the find box is narrowing the grid to. Matched anywhere in the
+    // name and case-insensitively, so "water" reaches WATER and BUCKET_WATER
+    // and "log" reaches every LOG_ tile at once.
+    let tileFilter = '';
+
+    function tileMatches(name) {
+      return !tileFilter || name.toLowerCase().includes(tileFilter);
+    }
+
+    function drawTileList() {
+      const box = $('tiles');
+      box.textContent = '';
+      let shown = 0;
+      for (const name of TILE_NAMES) {
+        if (!tileMatches(name)) continue;
+        shown++;
+        const idx = TILE[name];
+        const c = document.createElement('canvas');
+        c.width = c.height = AT;
+        c.title = name;
+        c.className = idx === tile ? 'sel' : '';
+        const g = c.getContext('2d');
+        g.imageSmoothingEnabled = false;
+        const th = styleId === 'real' ? thumbs.get(idx) : null;
+        if (th) g.putImageData(new ImageData(th, AT, AT), 0, 0);
+        else {
+          const ox = (idx % ATLAS.COLS) * AT, oy = ((idx / ATLAS.COLS) | 0) * AT;
+          g.drawImage(atlas.image, ox, oy, AT, AT, 0, 0, AT, AT);
+        }
+        c.onclick = () => {
+          tile = idx; drawTileList();
+          // the reference follows the tile you are painting while it is on
+          // the same one, which is nearly always what you want
+          if (refTile === prevTile) refTile = idx;
+          prevTile = idx;
+          loadTile().then(loadRef);
+        };
+        box.appendChild(c);
+      }
+      $('tileNone').hidden = shown > 0;
+    }
+
+    $('tileFind').addEventListener('input', (e) => {
+      tileFilter = e.target.value.trim().toLowerCase();
+      drawTileList();
+    });
+
+    // --- the painting grid ---------------------------------------------------
+    let basePx = null;            // the realistic board as nobody painted it
+    let prevTile = tile;
+    let loadSeq = 0;
+    async function loadTile() {
+      const my = ++loadSeq;
+      const key = `${styleId}/${tile}`;
+      const name = TILE_NAMES.find((n) => TILE[n] === tile);
+      let next, base = null;
+      if (styleId === 'real') {
+        ({ px: next, base } = await composeReal(tile, TS));
+      } else {
+        next = new Uint8ClampedArray(tilePixelsOf(atlas, tile).data);
+      }
+      if (my !== loadSeq) return;
+      px = next; basePx = base;
+      $('tileName').textContent = `${name} — ${styleId}` + (saved.has(key) ? ' (painted)' : '');
+      const info = styleId === 'real' && photosReady ? realTileInfo(tile) : null;
+      $('boardNote').textContent = !info ? ''
+        : info.layer < 0 ? 'No photograph for this one: you are painting over the '
+          + 'style\u2019s own pixel art, grown to 256 texels.'
+        : info.K > 1 ? 'This photograph covers two blocks a side and the board is one '
+          + 'of them. What you paint goes on every block, in the same place; what you '
+          + 'leave alone stays the photograph.'
+        : 'What you paint is laid over the photograph; what you leave alone stays it.';
+      undo.length = 0;
+      redo.length = 0;      // a different tile is a different history
+      drawPaint();
+      drawSwatches();
+      $('revertBtn').disabled = !saved.has(key);
+    }
+
+    const paint = $('paint');
+    const pctx = paint.getContext('2d');
+
+    function drawPaint() {
+      if (!px || px.length !== TS * TS * 4) return;
+      const img = pctx.createImageData(TS, TS);
+      img.data.set(px);
+      pctx.putImageData(img, 0, 0);
+      drawSel();
+      drawPreview();
+    }
+
+    // --- the reference board -------------------------------------------------
+    //
+    // A second style's atlas is built, the one tile is lifted out of it, and
+    // the atlas is thrown away again. It costs one generation per change of
+    // style or tile and nothing at all in between, which is the right trade for
+    // something you look at rather than paint on.
+    const ref = $('ref');
+    const rctx = ref.getContext('2d');
+
+    // Both boards the same size on screen, as big as the room allows: the
+    // two are meant to be read against each other.
+    function fitBoards() {
+      const mid = $('mid');
+      const room = Math.min((mid.clientWidth - 40) / 2, mid.clientHeight - 430);
+      const most = TS > AT ? 448 : 320;
+      let s = Math.max(192, Math.min(most, Math.floor(room)));
+      // pixel art at a whole number of screen pixels a texel stays even
+      if (TS <= AT) s = Math.max(AT * 6, Math.floor(s / AT) * AT);
+      for (const cv of [paint, ref]) cv.style.width = cv.style.height = `${s}px`;
+      drawSel();
+    }
+    function resizeBoards() {
+      for (const cv of [paint, ref]) cv.width = cv.height = TS;
+      refPx = null;
+      fitBoards();
+    }
+    addEventListener('resize', fitBoards);
+
+    // The reference, at the board's size whatever its own is: a classic tile
+    // grown onto a realistic board, a photograph shrunk onto a classic one.
+    let refSeq = 0;
+    async function loadRef() {
+      const my = ++refSeq;
+      const key = `${refStyleId}/${refTile}`;
+      const hit = saved.get(key);
+      let next;
+      ref.classList.toggle('waiting', refStyleId === 'real' && !photosReady);
+      if (refStyleId === 'real') {
+        await wantPhotos();
+        next = resample((await composeReal(refTile, REAL_N)).px, REAL_N, TS);
+        ref.classList.remove('waiting');
+      } else {
+        const was = currentStyle().id;
+        setTextureStyle(refStyleId);
+        const a = buildAtlas(42);
+        next = resample(new Uint8ClampedArray(tilePixelsOf(a, refTile).data), AT, TS);
+        a.dispose();
+        setTextureStyle(was);        // put the page back the way it was
+      }
+      if (my !== refSeq) return !!hit;
+      refPx = next;
+      drawRef();
+      $('refTile').value = String(refTile);
+      $('refStyle').value = refStyleId;
+      return !!hit;
+    }
+
+    function drawRef() {
+      if (!refPx || refPx.length !== TS * TS * 4) return;
+      const img = rctx.createImageData(TS, TS);
+      img.data.set(refPx);
+      rctx.putImageData(img, 0, 0);
+      drawSel();
+    }
+
+    // --- the selection -------------------------------------------------------
+    const norm = (s) => (s ? {
+      x0: Math.max(0, Math.min(s.x0, s.x1)), y0: Math.max(0, Math.min(s.y0, s.y1)),
+      x1: Math.min(TS - 1, Math.max(s.x0, s.x1)), y1: Math.min(TS - 1, Math.max(s.y0, s.y1)),
+    } : null);
+    const inSel = (x, y) => !sel
+      || (x >= sel.x0 && x <= sel.x1 && y >= sel.y0 && y <= sel.y1);
+
+    function drawSel() {
+      for (const [box, cv] of [[$('selBox'), paint], [$('refSelBox'), ref]]) {
+        if (!sel) { box.hidden = true; continue; }
+        const k = cv.clientWidth / TS || 8;
+        box.hidden = false;
+        box.style.left = `${sel.x0 * k}px`;
+        box.style.top = `${sel.y0 * k}px`;
+        box.style.width = `${(sel.x1 - sel.x0 + 1) * k}px`;
+        box.style.height = `${(sel.y1 - sel.y0 + 1) * k}px`;
+      }
+    }
+    function setSel(s) { sel = norm(s); drawSel(); }
+
+    // a cube of the tile, so a texture is judged as a block and not as a square
+    const preview = $('preview');
+    const vctx = preview.getContext('2d');
+    function drawPreview() {
+      const S = 220;
+      vctx.clearRect(0, 0, S, S);
+      const tmp = document.createElement('canvas');
+      tmp.width = tmp.height = TS;
+      const t = tmp.getContext('2d');
+      const img = t.createImageData(TS, TS);
+      img.data.set(px);
+      t.putImageData(img, 0, 0);
+      // a photograph shrunk onto a face wants smoothing; pixel art never does
+      vctx.imageSmoothingEnabled = TS > AT;
+      // three faces at the shades the game uses, so a texture is judged in the
+      // light it will actually be seen in — or, for the photographs, which
+      // the sun shades in the game rather than the atlas, at the shades of a
+      // block in a morning sun
+      const shade = TS > AT ? { top: 1.0, sideU: 0.78, sideV: 0.6 } : currentStyle().shade;
+      const draw = (dx, dy, w, h, k) => {
+        vctx.save();
+        vctx.globalAlpha = 1;
+        vctx.drawImage(tmp, dx, dy, w, h);
+        vctx.fillStyle = `rgba(0,0,0,${1 - k})`;
+        vctx.fillRect(dx, dy, w, h);
+        vctx.restore();
+      };
+      draw(10, 10, 128, 128, shade.top);
+      draw(10, 138, 128, 64, shade.sideU);
+      draw(138, 10, 64, 192, shade.sideV);
+    }
+
+    function drawSwatches() {
+      const box = $('swatches');
+      box.textContent = '';
+      const seen = new Map();
+      for (let i = 0; i < TS * TS; i++) {
+        if (px[i * 4 + 3] === 0) continue;
+        const hex = '#' + [0, 1, 2].map((k) =>
+          px[i * 4 + k].toString(16).padStart(2, '0')).join('');
+        seen.set(hex, (seen.get(hex) || 0) + 1);
+      }
+      [...seen.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24)
+        .forEach(([hex]) => {
+          const el = document.createElement('i');
+          el.style.background = hex;
+          el.title = hex;
+          el.onclick = () => { $('ink').value = hex; erasing = false; updateErase(); };
+          box.appendChild(el);
+        });
+    }
+
+    // one texel, and the only place the wrap lives: paint off one edge and it
+    // comes back on the other, which is what makes a tile tile
+    function poke(x, y, rgba) {
+      const xx = ((x % TS) + TS) % TS, yy = ((y % TS) + TS) % TS;
+      const i = (yy * TS + xx) * 4;
+      px[i] = rgba[0]; px[i + 1] = rgba[1]; px[i + 2] = rgba[2]; px[i + 3] = rgba[3];
+    }
+
+    // A brush on the photograph's board is round: a square eight texels
+    // across is a stamp, not a stroke.
+    function put(x, y, rgba) {
+      const n = brush, half = (n - 1) >> 1;
+      const round = TS > AT && n > 2, c = (n - 1) / 2 - half, r2 = (n / 2) ** 2;
+      for (let dy = -half; dy < n - half; dy++)
+        for (let dx = -half; dx < n - half; dx++) {
+          if (round && (dx - c) ** 2 + (dy - c) ** 2 > r2) continue;
+          poke(x + dx, y + dy, rgba);
+        }
+    }
+
+    // --- shapes --------------------------------------------------------------
+    //
+    // Both are stamped from the drag's two corners, and both are drawn again
+    // from scratch on every pointer move over a clean copy of the tile — so
+    // what you see while dragging is exactly what you get when you let go,
+    // and nothing is committed until then.
+    //
+    // An outline goes through put(), so the brush sets how thick it is. A fill
+    // goes through poke(), because a fatter brush cannot make a solid shape
+    // any more solid — it would only bleed past the edge you dragged.
+    function rectangle(x0, y0, x1, y1, rgba) {
+      const ax = Math.min(x0, x1), bx = Math.max(x0, x1);
+      const ay = Math.min(y0, y1), by = Math.max(y0, y1);
+      for (let x = ax; x <= bx; x++)
+        for (let y = ay; y <= by; y++) {
+          if (filled) poke(x, y, rgba);
+          else if (x === ax || x === bx || y === ay || y === by) put(x, y, rgba);
+        }
+    }
+
+    // An ellipse in the dragged box, which is a circle when the box is square.
+    // The outline is every inside cell with an outside neighbour rather than a
+    // midpoint walk: it costs nothing at 32x32, and it cannot leave the gaps a
+    // stepped walk leaves on a squashed ellipse.
+    function ellipse(x0, y0, x1, y1, rgba) {
+      const ax = Math.min(x0, x1), bx = Math.max(x0, x1);
+      const ay = Math.min(y0, y1), by = Math.max(y0, y1);
+      const cx = (ax + bx) / 2, cy = (ay + by) / 2;
+      const rx = Math.max((bx - ax) / 2, 0.5), ry = Math.max((by - ay) / 2, 0.5);
+      const inside = (x, y) =>
+        ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0001;
+      for (let x = ax; x <= bx; x++)
+        for (let y = ay; y <= by; y++) {
+          if (!inside(x, y)) continue;
+          if (filled) { poke(x, y, rgba); continue; }
+          if (!inside(x - 1, y) || !inside(x + 1, y)
+            || !inside(x, y - 1) || !inside(x, y + 1)) put(x, y, rgba);
+        }
+    }
+
+    // --- the tools that are not a stroke -------------------------------------
+
+    // A LINE. Bresenham through put(), so the brush sets how thick it is.
+    function line(x0, y0, x1, y1, rgba) {
+      let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+      const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx + dy;
+      for (;;) {
+        put(x0, y0, rgba);
+        if (x0 === x1 && y0 === y1) break;
+        const e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+      }
+    }
+
+    // On pixel art a colour is a colour. On a photograph no two texels are
+    // quite the same, so the bucket and the ink swap take a colour and its
+    // near neighbours — or they would only ever touch the texel clicked.
+    const sameAt = (i, c) => (TS > AT
+      ? Math.abs(px[i] - c[0]) + Math.abs(px[i + 1] - c[1]) + Math.abs(px[i + 2] - c[2]) <= 42
+        && Math.abs(px[i + 3] - c[3]) < 40
+      : px[i] === c[0] && px[i + 1] === c[1] && px[i + 2] === c[2] && px[i + 3] === c[3]);
+
+    // THE BUCKET. A flood over the four-neighbourhood, stopped by the
+    // selection — so a fill inside a box stays in the box, which is most of
+    // what a selection is for. It does NOT wrap: a fill that came round the
+    // edge and swallowed the far side would be a fill nobody asked for.
+    function bucket(x, y, rgba) {
+      const at = (a, b) => (b * TS + a) * 4;
+      const from = [px[at(x, y)], px[at(x, y) + 1], px[at(x, y) + 2], px[at(x, y) + 3]];
+      if (from[0] === rgba[0] && from[1] === rgba[1] && from[2] === rgba[2]
+        && from[3] === rgba[3]) return;
+      // what is already ink stops a tolerant fill from running back over it
+      const ink = (i) => px[i] === rgba[0] && px[i + 1] === rgba[1]
+        && px[i + 2] === rgba[2] && px[i + 3] === rgba[3];
+      const stack = [[x, y]];
+      const seen = new Uint8Array(TS * TS);
+      while (stack.length) {
+        const [a, b] = stack.pop();
+        if (a < 0 || b < 0 || a >= TS || b >= TS) continue;
+        if (seen[b * TS + a]) continue;
+        if (!inSel(a, b)) continue;
+        if (ink(at(a, b)) || !sameAt(at(a, b), from)) continue;
+        seen[b * TS + a] = 1;
+        poke(a, b, rgba);
+        stack.push([a + 1, b], [a - 1, b], [a, b + 1], [a, b - 1]);
+      }
+    }
+
+    // SWAP INK. Every texel of the colour you clicked becomes the ink — the
+    // one operation that is neither a stroke nor a shape, and the fastest way
+    // to recolour a block you already like the shape of.
+    function swapInk(x, y, rgba) {
+      const i = (y * TS + x) * 4;
+      const from = [px[i], px[i + 1], px[i + 2], px[i + 3]];
+      for (let b = 0; b < TS; b++) {
+        for (let a = 0; a < TS; a++) {
+          if (!inSel(a, b)) continue;
+          if (sameAt((b * TS + a) * 4, from)) poke(a, b, rgba);
+        }
+      }
+    }
+
+    // --- selection operations ------------------------------------------------
+    const box = () => sel ?? { x0: 0, y0: 0, x1: TS - 1, y1: TS - 1 };
+    function grab(from) {
+      const b = box();
+      const w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1;
+      const data = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const s = ((b.y0 + y) * TS + (b.x0 + x)) * 4;
+          data.set(from.slice(s, s + 4), (y * w + x) * 4);
+        }
+      }
+      return { w, h, data };
+    }
+    // ...and put one back down. `at` is the top-left; a stamp that runs off the
+    // edge WRAPS, because a tile wraps and a pattern pasted across the seam is
+    // the whole reason somebody would paste one there.
+    function stampAt(clipIn, ax, ay) {
+      if (!clipIn) return;
+      for (let y = 0; y < clipIn.h; y++) {
+        for (let x = 0; x < clipIn.w; x++) {
+          const i = (y * clipIn.w + x) * 4;
+          poke(ax + x, ay + y, [clipIn.data[i], clipIn.data[i + 1],
+            clipIn.data[i + 2], clipIn.data[i + 3]]);
+        }
+      }
+    }
+    function overSel(fn) {
+      const b = box();
+      const w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1;
+      const src = grab(px);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const [sx, sy] = fn(x, y, w, h);
+          const i = (sy * w + sx) * 4;
+          poke(b.x0 + x, b.y0 + y, [src.data[i], src.data[i + 1],
+            src.data[i + 2], src.data[i + 3]]);
+        }
+      }
+    }
+
+    const inkRGBA = () => {
+      if (erasing) return [0, 0, 0, 0];
+      const h = $('ink').value;
+      return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16),
+        parseInt(h.slice(5, 7), 16), 255];
+    };
+
+    const cellIn = (cv, ev) => {
+      const r = cv.getBoundingClientRect();
+      return [Math.floor(((ev.clientX - r.left) / r.width) * TS),
+        Math.floor(((ev.clientY - r.top) / r.height) * TS)];
+    };
+    const cellAt = (ev) => cellIn(paint, ev);
+
+    // THE PICKER. One texel, one colour, on whichever board was clicked — the
+    // reference included, which is the point: you take the colour off the tile
+    // you are copying from without ever leaving the tile you are painting.
+    function pickFrom(buf, x, y) {
+      const i = (y * TS + x) * 4;
+      if (buf[i + 3] === 0) { erasing = true; }
+      else {
+        $('ink').value = '#' + [buf[i], buf[i + 1], buf[i + 2]]
+          .map((v) => v.toString(16).padStart(2, '0')).join('');
+        erasing = false;
+      }
+      updateErase();
+      return $('ink').value;
+    }
+
+    let drawing = false;
+    let dragFrom = null;      // the corner the shape is being pulled from
+    let dragBase = null;      // the tile as it was, redrawn under every preview
+    paint.addEventListener('contextmenu', (e) => e.preventDefault());
+    paint.addEventListener('pointerdown', (e) => {
+      if (!px) return;
+      const [x, y] = cellAt(e);
+      if (x < 0 || y < 0 || x >= TS || y >= TS) return;
+      if (e.button === 2 || e.altKey || tool === 'pick') {
+        pickFrom(px, x, y);
+        return;
+      }
+      // A SELECTION is not a stroke: nothing is written, so nothing is undone.
+      if (tool === 'select') {
+        drawing = true;
+        dragFrom = [x, y];
+        setSel({ x0: x, y0: y, x1: x, y1: y });
+        paint.setPointerCapture(e.pointerId);
+        return;
+      }
+      pushUndo();
+      drawing = true;
+      dragFrom = [x, y];
+      dragBase = new Uint8ClampedArray(px);
+      stamp(x, y);
+      drawPaint();
+      paint.setPointerCapture(e.pointerId);
+    });
+
+    // ...and the reference board answers exactly one gesture: give me that
+    // colour. It is a thing you read, not a thing you paint.
+    ref.addEventListener('contextmenu', (e) => e.preventDefault());
+    ref.addEventListener('pointerdown', (e) => {
+      const [x, y] = cellIn(ref, e);
+      if (x < 0 || y < 0 || x >= TS || y >= TS || !refPx) return;
+      say(`picked ${pickFrom(refPx, x, y)} off the reference`);
+    });
+    paint.addEventListener('pointermove', (e) => {
+      if (!drawing) return;
+      const [x, y] = cellAt(e);
+      if (x < 0 || y < 0 || x >= TS || y >= TS) return;
+      if (tool === 'select') {
+        setSel({ x0: dragFrom[0], y0: dragFrom[1], x1: x, y1: y });
+        return;
+      }
+      // a shape is redrawn from the tile as it was, so dragging back and forth
+      // does not pile one attempt on top of the last
+      if (tool !== 'pencil') px.set(dragBase);
+      stamp(x, y);
+      drawPaint();
+    });
+
+    function stamp(x, y) {
+      const rgba = inkRGBA();
+      if (tool === 'pencil') { put(x, y, rgba); mirrorPut(x, y, rgba); return; }
+      if (tool === 'bucket') { bucket(x, y, rgba); return; }
+      if (tool === 'swap') { swapInk(x, y, rgba); return; }
+      if (tool === 'stamp') { stampAt(clip, x, y); return; }
+      if (tool === 'line') { line(dragFrom[0], dragFrom[1], x, y, rgba); return; }
+      if (tool === 'rect') { rectangle(dragFrom[0], dragFrom[1], x, y, rgba); return; }
+      ellipse(dragFrom[0], dragFrom[1], x, y, rgba);
+    }
+    // MIRROR. The same texel on the other side of the tile, so a face drawn
+    // once comes out symmetrical — which is what most block art wants and what
+    // nobody can do freehand at thirty-two texels.
+    function mirrorPut(x, y, rgba) {
+      if (mirror) put(TS - 1 - x, y, rgba);
+    }
+
+    const stop = () => { if (drawing) { drawing = false; drawSwatches(); } };
+    paint.addEventListener('pointerup', stop);
+    paint.addEventListener('pointercancel', stop);
+
+    function updateErase() {
+      $('eraseBtn').classList.toggle('on', erasing);
+    }
+    $('eraseBtn').onclick = () => { erasing = !erasing; updateErase(); };
+
+    // --- undo ----------------------------------------------------------------
+    //
+    // One entry per stroke, pushed before the first texel of it changes, so a
+    // drag of any length undoes as the one thing it looked like. A new stroke
+    // drops the redo pile, which is the rule every editor uses: once you have
+    // drawn something else, the thing you undid is not coming back.
+    function pushUndo() {
+      undo.push(new Uint8ClampedArray(px));
+      if (undo.length > 40) undo.shift();
+      redo.length = 0;
+    }
+    function step(from, to, none) {
+      const prev = from.pop();
+      if (!prev) { say(none); return; }
+      to.push(new Uint8ClampedArray(px));
+      px = prev; drawPaint(); drawSwatches();
+    }
+    $('undoBtn').onclick = () => step(undo, redo, 'nothing to undo');
+    $('redoBtn').onclick = () => step(redo, undo, 'nothing to redo');
+
+    addEventListener('keydown', (e) => {
+      // esc drops a shape you are still dragging, and takes its undo entry
+      // with it — a cancelled shape should not cost a press of undo either
+      if (e.key === 'Escape') {
+        if (drawing) {
+          drawing = false; px.set(dragBase); undo.pop();
+          drawPaint(); drawSwatches();
+        } else if (parent !== window) {
+          parent.postMessage('blockmaker:close', location.origin);
+        }
+        return;
+      }
+      // arrows nudge the selection, which is how you line a pasted patch up
+      if (sel && e.key.startsWith('Arrow') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+        const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+        setSel({ x0: sel.x0 + dx, y0: sel.y0 + dy, x1: sel.x1 + dx, y1: sel.y1 + dy });
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); $('undoBtn').onclick(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) {
+        e.preventDefault(); $('redoBtn').onclick();
+      } else if (k === 'c') { e.preventDefault(); doCopy(); }
+      else if (k === 'x') { e.preventDefault(); doCut(); }
+      else if (k === 'v') { e.preventDefault(); doPaste(); }
+      else if (k === 'a') { e.preventDefault(); $('selAll').onclick(); }
+    });
+
+    document.querySelectorAll('.tool').forEach((b) => {
+      b.onclick = () => {
+        tool = b.dataset.t;
+        document.querySelectorAll('.tool').forEach((x) => x.classList.toggle('on', x === b));
+      };
+    });
+    $('fillBtn').onclick = () => {
+      filled = !filled;
+      $('fillBtn').classList.toggle('on', filled);
+    };
+    // The brushes are the board's: one to four texels on pixel art, and on a
+    // photograph of 256 a row that goes up to a proper stroke.
+    function drawBrushes() {
+      const box = $('brushes');
+      box.textContent = '';
+      const sizes = TS > AT ? [1, 4, 8, 16, 32] : [1, 2, 3, 4];
+      if (!sizes.includes(brush)) brush = sizes[TS > AT ? 2 : 0];
+      for (const n of sizes) {
+        const b = document.createElement('button');
+        b.className = `brush${n === brush ? ' on' : ''}`;
+        b.dataset.n = String(n);
+        b.textContent = String(n);
+        b.onclick = () => {
+          brush = n;
+          box.querySelectorAll('.brush').forEach((x) => x.classList.toggle('on', x === b));
+        };
+        box.appendChild(b);
+      }
+    }
+    drawBrushes();
+    $('mirrorBtn').onclick = () => {
+      mirror = !mirror;
+      $('mirrorBtn').classList.toggle('on', mirror);
+    };
+
+    // --- copy, cut, paste ----------------------------------------------------
+    //
+    // All four act on the SELECTION, and no selection means the whole tile —
+    // one rule, so "copy" never has to be explained twice.
+    const doCopy = () => {
+      clip = grab(px);
+      say(`copied ${clip.w}\u00d7${clip.h}`);
+    };
+    const doCut = () => {
+      doCopy();
+      pushUndo();
+      const b = box();
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) poke(x, y, [0, 0, 0, 0]);
+      }
+      drawPaint(); drawSwatches();
+    };
+    const doPaste = () => {
+      if (!clip) { say('nothing copied yet'); return; }
+      pushUndo();
+      const b = box();
+      stampAt(clip, b.x0, b.y0);
+      drawPaint(); drawSwatches();
+      say(`pasted at ${b.x0},${b.y0} \u2014 pick the stamp tool to place it `
+        + 'anywhere by clicking');
+    };
+    $('copySelBtn').onclick = doCopy;
+    $('cutBtn').onclick = doCut;
+    $('pasteBtn').onclick = doPaste;
+    $('clearBtn').onclick = () => {
+      pushUndo();
+      const b = box();
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) poke(x, y, inkRGBA());
+      }
+      drawPaint(); drawSwatches();
+    };
+    $('selAll').onclick = () => setSel({ x0: 0, y0: 0, x1: TS - 1, y1: TS - 1 });
+    $('selNone').onclick = () => setSel(null);
+
+    // --- turning it about ----------------------------------------------------
+    $('flipH').onclick = () => {
+      pushUndo(); overSel((x, y, w) => [w - 1 - x, y]); drawPaint();
+    };
+    $('flipV').onclick = () => {
+      pushUndo(); overSel((x, y, w, h) => [x, h - 1 - y]); drawPaint();
+    };
+    // A quarter turn only makes sense on a square, which the whole tile always
+    // is and a selection may not be — so an oblong is turned about its own
+    // centre and whatever falls outside it is left alone.
+    $('rotBtn').onclick = () => {
+      pushUndo();
+      overSel((x, y, w, h) => {
+        const n = Math.min(w, h);
+        if (x >= n || y >= n) return [x, y];
+        return [y, n - 1 - x];
+      });
+      drawPaint();
+    };
+    $('fillSel').onclick = () => {
+      pushUndo();
+      const b = box();
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) poke(x, y, inkRGBA());
+      }
+      drawPaint(); drawSwatches();
+    };
+
+    // --- taking from the reference -------------------------------------------
+    //
+    // The same box on both boards, so "copy that corner across" is a drag and
+    // one press. This is the whole reason there are two boards.
+    $('takeAll').onclick = () => {
+      if (!refPx) return;
+      pushUndo();
+      px.set(refPx);
+      drawPaint(); drawSwatches();
+      say(`took the whole ${$('refStyle').selectedOptions[0].textContent} tile`);
+    };
+    $('takeSel').onclick = () => {
+      if (!refPx) return;
+      pushUndo();
+      const b = box();
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) {
+          const i = (y * TS + x) * 4;
+          poke(x, y, [refPx[i], refPx[i + 1], refPx[i + 2], refPx[i + 3]]);
+        }
+      }
+      drawPaint(); drawSwatches();
+      say(`took ${b.x1 - b.x0 + 1}\u00d7${b.y1 - b.y0 + 1} from the reference`);
+    };
+    // ...and the other way, which is what you want the moment you have painted
+    // the better version on the wrong board.
+    $('swapBtn').onclick = () => {
+      if (!refPx) return;
+      const keep = new Uint8ClampedArray(px);
+      pushUndo();
+      px.set(refPx);
+      refPx = keep;
+      drawPaint(); drawRef(); drawSwatches();
+      say('swapped the two boards');
+    };
+
+    // --- saving --------------------------------------------------------------
+    //
+    // A palette plus run-length pairs. Most tiles use a couple of dozen
+    // colours over a thousand texels, so the palette is short and the runs are
+    // long; and both stay readable in a diff, which a base64 blob would not.
+    function encode() {
+      const palette = [];
+      const index = new Map();
+      const idOf = (hex) => {
+        if (!index.has(hex)) { index.set(hex, palette.length); palette.push(hex); }
+        return index.get(hex);
+      };
+      const runs = [];
+      let prev = -1, run = 0;
+      for (let i = 0; i < TS * TS; i++) {
+        const hex = px[i * 4 + 3] === 0 ? null
+          : '#' + [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]]
+            .map((v) => v.toString(16).padStart(2, '0')).join('');
+        const id = idOf(hex);
+        if (id === prev) { run++; continue; }
+        if (run) runs.push([prev, run]);
+        prev = id; run = 1;
+      }
+      if (run) runs.push([prev, run]);
+      return {
+        version: 1,
+        style: styleId,
+        tile,
+        tileName: TILE_NAMES.find((n) => TILE[n] === tile),
+        palette, runs,
+      };
+    }
+
+    // The PHOTOGRAPH'S kind (version 2): not the tile, but what was painted
+    // on it and where — two PNGs the size of the board, the painted texels
+    // in one and a white mask of them in the other. Only the difference is
+    // kept, so the photograph under it can go on improving, and a painting
+    // on a two-block photograph can go on every block of it.
+    function encodeReal() {
+      const n = TS;
+      const paintImg = new ImageData(n, n), maskImg = new ImageData(n, n);
+      let painted = 0;
+      for (let k = 0; k < n * n; k++) {
+        const o = k * 4;
+        const diff = !basePx || px[o] !== basePx[o] || px[o + 1] !== basePx[o + 1]
+          || px[o + 2] !== basePx[o + 2] || px[o + 3] !== basePx[o + 3];
+        maskImg.data.set(diff ? [255, 255, 255, 255] : [0, 0, 0, 255], o);
+        if (!diff) continue;
+        paintImg.data.set(px.subarray(o, o + 4), o);
+        painted++;
+      }
+      const png = (img) => {
+        const c = document.createElement('canvas');
+        c.width = c.height = n;
+        c.getContext('2d').putImageData(img, 0, 0);
+        return c.toDataURL('image/png');
+      };
+      return {
+        version: 2,
+        style: styleId,
+        tile,
+        tileName: TILE_NAMES.find((nm) => TILE[nm] === tile),
+        n, painted,
+        paint: png(paintImg), mask: png(maskImg),
+      };
+    }
+
+    const fileName = () => `${styleId}__${TILE_NAMES.find((n) => TILE[n] === tile)}`;
+    const encodeBoard = () => (styleId === 'real' ? encodeReal() : encode());
+
+    $('saveBtn').onclick = async () => {
+      const body = encodeBoard();
+      if (body.version === 2 && !body.painted) {
+        say('nothing on this board differs from the photograph \u2014 nothing to save');
+        return;
+      }
+      try {
+        const res = await fetch(`/blocktex?name=${encodeURIComponent(fileName())}`,
+          { method: 'POST', body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await res.text());
+        saved.set(`${styleId}/${tile}`, body);
+        thumbs.delete(tile);
+        setTileOverrides([...saved.values()]);
+        say(`saved ${await res.text()} — ` + (body.version === 2
+          ? `${body.painted} of ${body.n * body.n} texels painted over the photograph`
+          : `${body.palette.length} colours, ${body.runs.length} runs`), 'good');
+        // the game behind this frame, if there is one, picks it up now
+        if (parent !== window) {
+          parent.postMessage({ type: 'blockmaker:saved', style: styleId, tile },
+            location.origin);
+        }
+        // rebuild, don't just reload: loadTile reads the tile out of the
+        // ATLAS, and until the atlas is built again with the override in it
+        // that still holds the generated pixels — saving would appear to
+        // throw the painting away.
+        await regenerate();
+      } catch (e) {
+        say(`could not save (${e.message}) — use copy JSON`, 'bad');
+      }
+    };
+    $('copyBtn').onclick = async () => {
+      const text = JSON.stringify(encodeBoard());
+      try {
+        await navigator.clipboard.writeText(text);
+        say(`copied — paste into blocks/${fileName()}.json`, 'good');
+      } catch { say(text); }
+    };
+    $('revertBtn').onclick = async () => {
+      saved.delete(`${styleId}/${tile}`);
+      thumbs.delete(tile);
+      setTileOverrides([...saved.values()]);
+      await regenerate();
+      say('back to the generated tile here — delete the file in blocks/ to '
+        + 'make that permanent');
+    };
+
+    // --- style picker --------------------------------------------------------
+    const styleSel = $('style');
+    for (const s of STYLES) {
+      const o = document.createElement('option');
+      o.value = s.id; o.textContent = s.name;
+      styleSel.appendChild(o);
+    }
+    styleSel.value = styleId;
+    styleSel.onchange = () => { styleId = styleSel.value; regenerate(); };
+
+    // The reference starts on a DIFFERENT style and the same tile, because
+    // that is the comparison somebody opens this for: what does the other
+    // people's brick look like.
+    const refStyleSel = $('refStyle');
+    for (const s of STYLES) {
+      const o = document.createElement('option');
+      o.value = s.id; o.textContent = s.name;
+      refStyleSel.appendChild(o);
+    }
+    refStyleId = (STYLES.find((s) => s.id !== styleId) ?? STYLES[0]).id;
+    const refTileSel = $('refTile');
+    for (const name of TILE_NAMES) {
+      const o = document.createElement('option');
+      o.value = String(TILE[name]); o.textContent = name.toLowerCase();
+      refTileSel.appendChild(o);
+    }
+    refStyleSel.onchange = () => { refStyleId = refStyleSel.value; loadRef(); };
+    refTileSel.onchange = () => { refTile = Number(refTileSel.value); loadRef(); };
+
+    await loadSaved();
+    // the reference follows the tile you are painting until you send it
+    // somewhere else, which is nearly always what you want
+    refTile = tile;
+    TS = sizeOf(styleId);
+    resizeBoards();
+    drawBrushes();
+    await regenerate();
+    updateErase();
+    document.documentElement.dataset.ready = '1';
+
+    // the harness drives the same paths the controls do
+    window.__pick = async (styleName, tileName) => {
+      if (styleName) { styleId = styleName; styleSel.value = styleName; }
+      if (tileName) { tile = TILE[tileName]; refTile = tile; prevTile = tile; }
+      await regenerate();
+      return { style: styleId, tile, name: TILE_NAMES.find((n) => TILE[n] === tile), size: TS };
+    };
+    window.__photos = () => ({ ready: photosReady, ...realStatus() });
+    window.__paint = (x, y, hex) => {
+      $('ink').value = hex; erasing = false;
+      pushUndo();
+      put(x, y, inkRGBA());
+      drawPaint();
+      return hex;
+    };
+    window.__save = () => $('saveBtn').onclick();
+    window.__brush = (n) => { brush = n; drawBrushes(); return brush; };
+    window.__encode = () => encode();
+    window.__pixel = (x, y) => [...px.slice((y * TS + x) * 4, (y * TS + x) * 4 + 4)];
+    window.__refPixel = (x, y) =>
+      [...refPx.slice((y * TS + x) * 4, (y * TS + x) * 4 + 4)];
+    window.__tool = (t) => {
+      const b = [...document.querySelectorAll('.tool')].find((x) => x.dataset.t === t);
+      if (b) b.onclick();
+      return tool;
+    };
+    window.__sel = (x0, y0, x1, y1) => {
+      setSel(x0 === undefined ? null : { x0, y0, x1, y1 });
+      return sel;
+    };
+    window.__ref = async (styleName, tileName) => {
+      if (styleName) refStyleId = styleName;
+      if (tileName) refTile = TILE[tileName];
+      await loadRef();
+      return { style: refStyleId, tile: refTile };
+    };
+    window.__press = (id) => { $(id).onclick(); return true; };
+    window.__stroke = (t, x0, y0, x1, y1, hex) => {
+      if (hex) { $('ink').value = hex; erasing = false; updateErase(); }
+      window.__tool(t);
+      pushUndo();
+      dragFrom = [x0, y0];
+      dragBase = new Uint8ClampedArray(px);
+      stamp(x1 ?? x0, y1 ?? y0);
+      drawPaint(); drawSwatches();
+      return true;
+    };
+  </script>
+</body>
+</html>
