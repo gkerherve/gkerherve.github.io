@@ -1,0 +1,1 @@
+import{t as e}from"./WebGame-k2YOudyo.js";import{t}from"./jsx-runtime-B74pBk57.js";var n=t();function r({win:t}){return(0,n.jsx)(e,{game:`planetcraft`,win:t})}export{r as default};
