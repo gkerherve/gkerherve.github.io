@@ -1,0 +1,1 @@
+import{rt as e}from"./windows-u5OMZn-i.js";var t={name:`slash`,size:24,node:[[`path`,{d:`M22 2 2 22`,key:`y4kqgn`}]]};t.node;var n=e(t);export{n as t};
