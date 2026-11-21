@@ -1,0 +1,1 @@
+import{w as e}from"./os-DtWoJXp7.js";import{t}from"./WebGame--SNUBxss.js";var n=e();function r({win:e}){return(0,n.jsx)(t,{game:`facecraft`,win:e})}export{r as default};

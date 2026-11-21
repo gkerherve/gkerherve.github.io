@@ -1,0 +1,1 @@
+var e=`/assets/RDKit_minimal-Caz3BPtI.wasm`;export{e as default};
