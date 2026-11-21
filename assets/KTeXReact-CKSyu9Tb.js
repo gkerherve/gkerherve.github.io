@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-B74pBk57.js";var t=e();function n(e){return(0,t.jsx)(`iframe`,{title:`kTeX`,src:`/apps/ktex-react/index.html`,style:{border:0,width:`100%`,height:`100%`,display:`block`,background:`#fff`},allow:`clipboard-read; clipboard-write; fullscreen`})}export{n as default};
